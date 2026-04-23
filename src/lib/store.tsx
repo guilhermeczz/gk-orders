@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  type ReactNode,
+} from 'react';
 import type {
   Order,
   Product,
@@ -24,12 +31,31 @@ interface AppState {
   categories: Category[];
   orderCounter: number;
   fetchUsers: () => Promise<void>;
-  addOrder: (customerName: string, items: OrderItem[], notes?: string) => Promise<void>;
-  updateOrder: (orderId: string, customerName: string, items: OrderItem[], notes?: string) => Promise<void>;
-  appendItemsToOrder: (orderId: string, items: OrderItem[], notes?: string) => Promise<void>;
+  fetchData: () => Promise<void>;
+  addOrder: (
+    customerName: string,
+    items: OrderItem[],
+    notes?: string,
+    createdBy?: string
+  ) => Promise<void>;
+  updateOrder: (
+    orderId: string,
+    customerName: string,
+    items: OrderItem[],
+    notes?: string
+  ) => Promise<void>;
+  appendItemsToOrder: (
+    orderId: string,
+    items: OrderItem[],
+    notes?: string
+  ) => Promise<void>;
   moveOrder: (orderId: string, newStatus: OrderStatus) => Promise<void>;
   deleteOrder: (orderId: string) => Promise<void>;
-  payOrder: (orderId: string, paymentMethod: PaymentMethod, cashMeta?: CashPaymentMeta) => Promise<void>;
+  payOrder: (
+    orderId: string,
+    paymentMethod: PaymentMethod,
+    cashMeta?: CashPaymentMeta
+  ) => Promise<void>;
   addProduct: (product: Omit<Product, 'id'>) => Promise<boolean>;
   updateProduct: (product: Product) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
@@ -58,7 +84,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     if (error) {
       console.error('Erro ao buscar usuários:', error);
-    } else if (userData) {
+      return;
+    }
+
+    if (userData) {
       setUsers(
         userData.map((u: any) => ({
           id: u.id,
@@ -97,72 +126,79 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       await fetchUsers();
 
-      const { data: orderData } = await supabase
+      const { data: orderData, error: orderError } = await supabase
         .from('pedidos')
         .select('*, pedido_itens(*)')
         .order('created_at', { ascending: false });
 
+      if (orderError) {
+        console.error('Erro ao buscar pedidos:', orderError);
+        return;
+      }
+
       if (orderData) {
-        setOrders(
-          orderData.map((o: any) => {
-            const itemRows = Array.isArray(o.pedido_itens) ? o.pedido_itens : [];
+        const mappedOrders: Order[] = orderData.map((o: any) => {
+          const itemRows = Array.isArray(o.pedido_itens) ? o.pedido_itens : [];
 
-            const sortedItems = [...itemRows].sort((a: any, b: any) => {
-              const batchCompare = Number(a.batch_number || 1) - Number(b.batch_number || 1);
-              if (batchCompare !== 0) return batchCompare;
-              return Number(a.id) - Number(b.id);
-            });
+          const sortedItems = [...itemRows].sort((a: any, b: any) => {
+            const batchCompare = Number(a.batch_number || 1) - Number(b.batch_number || 1);
+            if (batchCompare !== 0) return batchCompare;
+            return Number(a.id) - Number(b.id);
+          });
 
-            const allItems: OrderItem[] = sortedItems.map((item: any) => ({
+          const allItems: OrderItem[] = sortedItems.map((item: any) => ({
+            productId: String(item.produto_id || item.id),
+            productName: item.produto_nome,
+            quantity: item.quantidade,
+            unitPrice: Number(item.preco_unitario),
+          }));
+
+          const groupedBatches = new Map<number, OrderBatch>();
+
+          sortedItems.forEach((item: any) => {
+            const batchNumber = Number(item.batch_number || 1);
+
+            if (!groupedBatches.has(batchNumber)) {
+              groupedBatches.set(batchNumber, {
+                id: `order-${o.id}-batch-${batchNumber}`,
+                items: [],
+                notes: item.batch_notes || o.observacao || '',
+                createdAt: item.batch_created_at || o.created_at,
+                isAdditional: batchNumber > 1,
+              });
+            }
+
+            groupedBatches.get(batchNumber)!.items.push({
               productId: String(item.produto_id || item.id),
               productName: item.produto_nome,
               quantity: item.quantidade,
               unitPrice: Number(item.preco_unitario),
-            }));
-
-            const groupedBatches = new Map<number, OrderBatch>();
-
-            sortedItems.forEach((item: any) => {
-              const batchNumber = Number(item.batch_number || 1);
-              if (!groupedBatches.has(batchNumber)) {
-                groupedBatches.set(batchNumber, {
-                  id: `order-${o.id}-batch-${batchNumber}`,
-                  items: [],
-                  notes: item.batch_notes || o.observacao || '',
-                  createdAt: item.batch_created_at || o.created_at,
-                  isAdditional: batchNumber > 1,
-                });
-              }
-
-              groupedBatches.get(batchNumber)!.items.push({
-                productId: String(item.produto_id || item.id),
-                productName: item.produto_nome,
-                quantity: item.quantidade,
-                unitPrice: Number(item.preco_unitario),
-              });
             });
+          });
 
-            return {
-              id: String(o.id),
-              number: o.id,
-              customerName: o.cliente_nome,
-              total: Number(o.valor_total),
-              status: o.status as OrderStatus,
-              paid: o.pago,
-              paymentMethod: o.forma_pagamento as PaymentMethod,
-              notes: o.observacao,
-              createdAt: new Date(o.created_at),
-              paidAt: o.paid_at ? new Date(o.paid_at) : undefined,
-              cashSessionId: o.cash_session_id ?? null,
-              amountReceived: Number(o.amount_received || 0),
-              changeGiven: Number(o.change_given || 0),
-              items: allItems,
-              itemBatches: Array.from(groupedBatches.values()).sort(
-                (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-              ),
-            };
-          })
-        );
+          return {
+            id: String(o.id),
+            number: o.id,
+            customerName: o.cliente_nome,
+            total: Number(o.valor_total),
+            status: o.status as OrderStatus,
+            paid: o.pago,
+            paymentMethod: o.forma_pagamento as PaymentMethod,
+            notes: o.observacao,
+            createdAt: new Date(o.created_at),
+            paidAt: o.paid_at ? new Date(o.paid_at) : undefined,
+            cashSessionId: o.cash_session_id ?? null,
+            amountReceived: o.amount_received != null ? Number(o.amount_received) : null,
+            changeGiven: o.change_given != null ? Number(o.change_given) : null,
+            createdBy: o.created_by ?? null,
+            items: allItems,
+            itemBatches: Array.from(groupedBatches.values()).sort(
+              (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+            ),
+          };
+        });
+
+        setOrders(mappedOrders);
       }
     } catch (error) {
       console.error('Erro ao buscar dados:', error);
@@ -173,9 +209,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const channel = supabase
+      .channel(`pedidos-sync-${crypto.randomUUID()}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pedidos' },
+        async () => {
+          if (isMounted) await fetchData();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pedido_itens' },
+        async () => {
+          if (isMounted) await fetchData();
+        }
+      )
+      .subscribe((status) => {
+        console.log('Realtime pedidos:', status);
+      });
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(channel);
+    };
+  }, [fetchData]);
+
   const addOrder = useCallback(
-    async (customerName: string, items: OrderItem[], notes: string = '') => {
+    async (
+      customerName: string,
+      items: OrderItem[],
+      notes: string = '',
+      createdBy?: string
+    ) => {
       const total = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+      const safeCreatedBy = String(createdBy || '').trim() || 'Operador';
 
       const { data: order, error } = await supabase
         .from('pedidos')
@@ -185,6 +256,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             valor_total: total,
             status: 'new',
             observacao: notes,
+            created_by: safeCreatedBy,
           },
         ])
         .select()
@@ -203,7 +275,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch_created_at: new Date().toISOString(),
       }));
 
-      await supabase.from('pedido_itens').insert(itemsToInsert);
+      const { error: itemsError } = await supabase.from('pedido_itens').insert(itemsToInsert);
+      if (itemsError) throw itemsError;
+
       await fetchData();
       toast.success('Pedido realizado!');
     },
@@ -225,7 +299,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (orderError) throw orderError;
 
-      await supabase.from('pedido_itens').delete().eq('pedido_id', orderId);
+      const { error: deleteError } = await supabase
+        .from('pedido_itens')
+        .delete()
+        .eq('pedido_id', orderId);
+
+      if (deleteError) throw deleteError;
 
       const itemsToInsert = items.map((item) => ({
         pedido_id: orderId,
@@ -238,7 +317,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch_created_at: new Date().toISOString(),
       }));
 
-      await supabase.from('pedido_itens').insert(itemsToInsert);
+      const { error: insertError } = await supabase.from('pedido_itens').insert(itemsToInsert);
+      if (insertError) throw insertError;
+
       await fetchData();
       toast.success('Pedido atualizado!');
     },
@@ -291,7 +372,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const moveOrder = useCallback(
     async (orderId: string, newStatus: OrderStatus) => {
-      await supabase.from('pedidos').update({ status: newStatus }).eq('id', orderId);
+      const { error } = await supabase
+        .from('pedidos')
+        .update({ status: newStatus })
+        .eq('id', orderId);
+
+      if (error) throw error;
       await fetchData();
     },
     [fetchData]
@@ -299,68 +385,70 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteOrder = useCallback(
     async (orderId: string) => {
-      await supabase.from('pedidos').delete().eq('id', orderId);
+      const { error } = await supabase.from('pedidos').delete().eq('id', orderId);
+      if (error) throw error;
+
       await fetchData();
     },
     [fetchData]
   );
 
-const payOrder = useCallback(
-  async (orderId: string, paymentMethod: PaymentMethod, cashMeta?: { amountReceived?: number; changeGiven?: number }) => {
-    try {
-      let cashSessionId: number | null = null;
+  const payOrder = useCallback(
+    async (
+      orderId: string,
+      paymentMethod: PaymentMethod,
+      cashMeta?: { amountReceived?: number; changeGiven?: number }
+    ) => {
+      try {
+        let cashSessionId: number | null = null;
 
-      const { data: openSession, error: openSessionError } = await supabase
-        .from('cash_sessions')
-        .select('id')
-        .eq('status', 'open')
-        .order('id', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        const { data: openSession, error: openSessionError } = await supabase
+          .from('cash_sessions')
+          .select('id')
+          .eq('status', 'open')
+          .order('id', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      if (openSessionError) {
-        throw openSessionError;
-      }
+        if (openSessionError) throw openSessionError;
 
-      if (openSession?.id) {
-        cashSessionId = openSession.id;
-      }
+        if (openSession?.id) {
+          cashSessionId = openSession.id;
+        }
 
-      const updatePayload: any = {
-        status: 'paid',
-        pago: true,
-        forma_pagamento: paymentMethod,
-        paid_at: new Date().toISOString(),
-        cash_session_id: cashSessionId,
-      };
+        const updatePayload: any = {
+          status: 'paid',
+          pago: true,
+          forma_pagamento: paymentMethod,
+          paid_at: new Date().toISOString(),
+          cash_session_id: cashSessionId,
+        };
 
-      if (paymentMethod === 'dinheiro') {
-        updatePayload.amount_received = Number(cashMeta?.amountReceived || 0);
-        updatePayload.change_given = Number(cashMeta?.changeGiven || 0);
-      } else {
-        updatePayload.amount_received = null;
-        updatePayload.change_given = null;
-      }
+        if (paymentMethod === 'dinheiro') {
+          updatePayload.amount_received = Number(cashMeta?.amountReceived || 0);
+          updatePayload.change_given = Number(cashMeta?.changeGiven || 0);
+        } else {
+          updatePayload.amount_received = null;
+          updatePayload.change_given = null;
+        }
 
-      const { error } = await supabase
-        .from('pedidos')
-        .update(updatePayload)
-        .eq('id', orderId);
+        const { error } = await supabase
+          .from('pedidos')
+          .update(updatePayload)
+          .eq('id', orderId);
 
-      if (error) {
+        if (error) throw error;
+
+        await fetchData();
+        toast.success('Pagamento confirmado!');
+      } catch (error) {
+        console.error('Erro ao pagar pedido:', error);
+        toast.error('Não foi possível finalizar o pagamento.');
         throw error;
       }
-
-      await fetchData();
-      toast.success('Pagamento confirmado!');
-    } catch (error) {
-      console.error('Erro ao pagar pedido:', error);
-      toast.error('Não foi possível finalizar o pagamento.');
-      throw error;
-    }
-  },
-  [fetchData]
-);
+    },
+    [fetchData]
+  );
 
   const addProduct = useCallback(
     async (product: Omit<Product, 'id'>) => {
@@ -371,6 +459,7 @@ const payOrder = useCallback(
           categoria_id: product.categoryId,
         },
       ]);
+
       if (error) return false;
       await fetchData();
       return true;
@@ -443,6 +532,7 @@ const payOrder = useCallback(
           username: user.username,
         },
       ]);
+
       if (error) return false;
       await fetchUsers();
       return true;
@@ -496,6 +586,7 @@ const payOrder = useCallback(
         categories,
         orderCounter: orders.length + 1,
         fetchUsers,
+        fetchData,
         addOrder,
         updateOrder,
         appendItemsToOrder,

@@ -30,27 +30,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
 
-  // Função auxiliar para formatar o usuário vindo do Supabase
   const formatUser = (supabaseUser: any): AuthUser => ({
     id: supabaseUser.id,
     name: supabaseUser.user_metadata?.full_name || 'Operador',
     username: supabaseUser.user_metadata?.username || supabaseUser.email?.split('@')[0] || '',
   });
 
-  // 🔒 VERIFICAÇÃO DE SESSÃO ATIVA
   useEffect(() => {
     const initializeAuth = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
       if (session?.user) {
         setUser(formatUser(session.user));
       }
+
       setIsInitializing(false);
     };
 
     initializeAuth();
 
-    // Escuta mudanças de estado (Login, Logout, aba fechada)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
         setUser(formatUser(session.user));
       } else {
@@ -61,19 +64,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 🚪 LOGIN
   const login = useCallback(async (username: string, password: string): Promise<boolean> => {
     try {
       const cleanUsername = username.toLowerCase().trim();
       const email = `${cleanUsername}@gardens.com`;
-      
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
-        password
+        password,
       });
 
       if (error) {
-        // Erro 400 ou 401 cai aqui
         toast.error('Usuário ou senha inválidos.');
         return false;
       }
@@ -82,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(formatUser(data.user));
         toast.success(`Bem-vindo, ${data.user.user_metadata?.full_name || cleanUsername}!`);
       }
-      
+
       return true;
     } catch (err) {
       console.error('Erro no login:', err);
@@ -91,12 +92,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // 📝 CADASTRO (REGISTER)
   const register = useCallback(async (name: string, username: string, password: string): Promise<boolean> => {
     try {
       const cleanUsername = username.toLowerCase().trim();
       const email = `${cleanUsername}@gardens.com`;
-      
+
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -104,8 +104,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           data: {
             full_name: name.trim(),
             username: cleanUsername,
-          }
-        }
+          },
+        },
       });
 
       if (error) {
@@ -118,10 +118,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (data.user) {
+        const { error: dbError } = await supabase.from('usuarios').upsert([
+          {
+            id: data.user.id,
+            nome: name.trim(),
+            username: cleanUsername,
+          },
+        ]);
+
+        if (dbError) {
+          console.error('Erro ao inserir usuário na tabela usuarios:', dbError);
+        }
+
         toast.success('Conta criada com sucesso!');
-        // O onAuthStateChange cuidará do login automático se o Supabase estiver configurado para auto-confirm
       }
-      
+
       return true;
     } catch (err) {
       console.error('Erro no cadastro:', err);
@@ -130,14 +141,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // 📤 LOGOUT
   const logout = useCallback(async () => {
     await supabase.auth.signOut();
     setUser(null);
     toast.info('Sessão encerrada.');
   }, []);
 
-  // Tela de carregamento enquanto o Supabase verifica se você já está logado
   if (isInitializing) {
     return (
       <div className="flex items-center justify-center h-screen bg-background">
@@ -156,7 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         login,
         register,
-        logout
+        logout,
       }}
     >
       {children}

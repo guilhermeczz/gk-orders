@@ -7,6 +7,9 @@ export interface OrderItem {
   productName: string;
   quantity: number;
   unitPrice: number;
+  batchId?: string;
+  batchNotes?: string;
+  createdAt?: string | Date;
 }
 
 export interface OrderBatch {
@@ -14,7 +17,7 @@ export interface OrderBatch {
   items: OrderItem[];
   notes?: string;
   createdAt: string | Date;
-  isAdditional?: boolean;
+  isAdditional: boolean;
 }
 
 export interface Order {
@@ -22,17 +25,18 @@ export interface Order {
   number: number;
   customerName: string;
   items: OrderItem[];
-  itemBatches?: OrderBatch[];
   total: number;
   status: OrderStatus;
   createdAt: string | Date;
   notes?: string;
   paid?: boolean;
   paymentMethod?: PaymentMethod;
+  itemBatches?: OrderBatch[];
   paidAt?: string | Date;
   cashSessionId?: number | null;
-  amountReceived?: number;
-  changeGiven?: number;
+  amountReceived?: number | null;
+  changeGiven?: number | null;
+  createdBy?: string | null;
 }
 
 export interface Category {

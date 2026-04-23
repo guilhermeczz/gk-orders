@@ -56,7 +56,7 @@ export function KanbanBoard({ onEditOrder }: { onEditOrder?: (order: Order) => v
   const store = useAppStore();
   const todayOrders = store.getTodayOrders?.() ?? [];
   const deleteOrder = store.deleteOrder ?? (() => {});
-  const { moveOrder, payOrder, orders } = useAppStore();
+  const { moveOrder, payOrder, orders, fetchData } = useAppStore();
 
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [payTarget, setPayTarget] = useState<Order | null>(null);
@@ -77,6 +77,14 @@ export function KanbanBoard({ onEditOrder }: { onEditOrder?: (order: Order) => v
       return () => clearTimeout(timer);
     }
   }, [printJob]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchData();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [fetchData]);
 
   useEffect(() => {
     const fetchOpenSession = async () => {
@@ -590,18 +598,18 @@ export function KanbanBoard({ onEditOrder }: { onEditOrder?: (order: Order) => v
               <button
                 disabled={!canConfirmCashPayment}
                 onClick={async () => {
-  try {
-    await payOrder(cashTarget.id, 'dinheiro', {
-      amountReceived: cashReceivedValue,
-      changeGiven: cashChange,
-    });
+                  try {
+                    await payOrder(cashTarget.id, 'dinheiro', {
+                      amountReceived: cashReceivedValue,
+                      changeGiven: cashChange,
+                    });
 
-    setCashTarget(null);
-    setCashReceived('');
-  } catch (error) {
-    console.error(error);
-  }
-}}
+                    setCashTarget(null);
+                    setCashReceived('');
+                  } catch (error) {
+                    console.error(error);
+                  }
+                }}
                 className="flex-1 py-4 bg-green-600 hover:bg-green-500 text-white rounded-2xl font-black transition-all disabled:opacity-50 disabled:hover:bg-green-600"
               >
                 Confirmar
@@ -652,9 +660,23 @@ function OrderCard({
   return (
     <div className="bg-background border border-border rounded-xl p-3 shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300 relative group">
       {tipo && (
-        <div className="mb-2">
+        <div className="mb-2 flex flex-wrap gap-2">
           <span className={`text-[10px] font-black px-2 py-0.5 rounded border uppercase tracking-wider ${badgeColor}`}>
             {tipo}
+          </span>
+
+          {order.createdBy && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded border border-border bg-muted text-muted-foreground">
+              por {order.createdBy}
+            </span>
+          )}
+        </div>
+      )}
+
+      {!tipo && order.createdBy && (
+        <div className="mb-2">
+          <span className="text-[10px] font-bold px-2 py-0.5 rounded border border-border bg-muted text-muted-foreground">
+            por {order.createdBy}
           </span>
         </div>
       )}

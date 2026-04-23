@@ -3,6 +3,7 @@ import { useAppStore } from '@/lib/store';
 import type { OrderItem } from '@/lib/types';
 import { toast } from 'sonner';
 import { X, Search, Plus, Minus, ArrowLeft, ShoppingBag, Info } from 'lucide-react';
+import { useAuth } from '@/lib/auth';
 
 interface NewOrderModalProps {
   open: boolean;
@@ -26,6 +27,7 @@ export function NewOrderModal({
   appendBaseNotes,
 }: NewOrderModalProps) {
   const { products, categories, addOrder, updateOrder, appendItemsToOrder } = useAppStore();
+  const { user } = useAuth();
 
   const [customerName, setCustomerName] = useState('');
   const [notes, setNotes] = useState('');
@@ -42,26 +44,26 @@ export function NewOrderModal({
 
     setCustomerName(initialCustomerName ?? '');
 
-    let parsedNotes = initialNotes ?? appendBaseNotes ?? '';
-    let parsedType: any = '';
+    const sourceNotes = appendOrderId ? appendBaseNotes ?? '' : initialNotes ?? '';
+    let parsedNotes = appendOrderId ? '' : initialNotes ?? '';
+    let parsedType: 'Local' | 'Delivery' | 'Retirada' | '' = '';
 
-    if (parsedNotes.includes('[LOCAL]')) {
-      parsedType = 'Local';
-      parsedNotes = parsedNotes.replace('[LOCAL]', '').trim();
-    } else if (parsedNotes.includes('[DELIVERY]')) {
-      parsedType = 'Delivery';
-      parsedNotes = parsedNotes.replace('[DELIVERY]', '').trim();
-    } else if (parsedNotes.includes('[RETIRADA]')) {
-      parsedType = 'Retirada';
-      parsedNotes = parsedNotes.replace('[RETIRADA]', '').trim();
+    if (sourceNotes.includes('[LOCAL]')) parsedType = 'Local';
+    else if (sourceNotes.includes('[DELIVERY]')) parsedType = 'Delivery';
+    else if (sourceNotes.includes('[RETIRADA]')) parsedType = 'Retirada';
+
+    if (!appendOrderId) {
+      if (parsedNotes.includes('[LOCAL]')) parsedNotes = parsedNotes.replace('[LOCAL]', '').trim();
+      else if (parsedNotes.includes('[DELIVERY]')) parsedNotes = parsedNotes.replace('[DELIVERY]', '').trim();
+      else if (parsedNotes.includes('[RETIRADA]')) parsedNotes = parsedNotes.replace('[RETIRADA]', '').trim();
     }
 
-    setNotes(appendOrderId ? '' : parsedNotes);
+    setNotes(parsedNotes);
     setOrderType(parsedType);
-    setCart(initialCart ?? {});
+    setCart(appendOrderId ? {} : initialCart ?? {});
     setSearch('');
     setShowSummary(false);
-  }, [open, initialCustomerName, initialNotes, initialCart, appendOrderId, appendBaseNotes]);
+  }, [open, editOrderId, appendOrderId]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -93,8 +95,7 @@ export function NewOrderModal({
     return Object.entries(cart).reduce((sum, [id, qty]) => {
       const p: any = products.find((prod: any) => String(prod.id) === String(id));
       if (!p) return sum;
-      const itemPrice = Number(p.price || 0);
-      return sum + itemPrice * qty;
+      return sum + Number(p.price || 0) * qty;
     }, 0);
   }, [cart, products]);
 
@@ -103,6 +104,7 @@ export function NewOrderModal({
       .map(([id, quantity]) => {
         const p: any = products.find((prod: any) => String(prod.id) === String(id));
         if (!p) return null;
+
         return {
           productId: String(id),
           productName: p.name,
@@ -115,6 +117,7 @@ export function NewOrderModal({
 
   const updateQty = (productId: string | number, delta: number) => {
     const safeId = String(productId);
+
     setCart((prev) => {
       const next = (prev[safeId] || 0) + delta;
       if (next <= 0) {
@@ -139,7 +142,12 @@ export function NewOrderModal({
       } else if (editOrderId) {
         await updateOrder(editOrderId, customerName.trim(), cartItems, finalNotes);
       } else {
-        await addOrder(customerName.trim(), cartItems, finalNotes);
+        await addOrder(
+          customerName.trim(),
+          cartItems,
+          finalNotes,
+          user?.name || user?.username || 'Operador'
+        );
       }
 
       onClose();
@@ -187,6 +195,7 @@ export function NewOrderModal({
             </div>
             {title}
           </h2>
+
           <button
             onClick={onClose}
             className="p-2.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive rounded-xl transition-all hover:rotate-90"
@@ -202,6 +211,7 @@ export function NewOrderModal({
                 <h3 className="font-semibold text-muted-foreground mb-4 uppercase tracking-wider text-sm flex items-center gap-2">
                   <Info className="w-4 h-4" /> 1. Tipo de Atendimento <span className="text-destructive">*</span>
                 </h3>
+
                 <div className="grid grid-cols-3 gap-3 sm:gap-4">
                   {['Local', 'Delivery', 'Retirada'].map((type) => (
                     <button
@@ -223,10 +233,12 @@ export function NewOrderModal({
                 <h3 className="font-semibold text-muted-foreground mb-4 uppercase tracking-wider text-sm">
                   2. Cliente e Observações
                 </h3>
+
                 <p className="text-sm text-muted-foreground mb-1">Nome na comanda/mesa:</p>
                 <p className="font-bold text-xl text-foreground bg-background p-4 rounded-xl border border-border/40">
                   {customerName}
                 </p>
+
                 {notes && (
                   <div className="mt-4">
                     <p className="text-sm text-muted-foreground mb-1">Anotações da Cozinha:</p>
@@ -241,6 +253,7 @@ export function NewOrderModal({
                 <h3 className="font-semibold text-muted-foreground mb-4 uppercase tracking-wider text-sm">
                   3. Conferência de Itens
                 </h3>
+
                 <div className="space-y-2.5">
                   {cartItems.map((item, i) => (
                     <div
