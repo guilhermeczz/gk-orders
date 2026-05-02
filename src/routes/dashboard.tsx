@@ -1,6 +1,8 @@
 import { createFileRoute, Navigate } from '@tanstack/react-router';
 import { useState, useMemo } from 'react';
-import { KanbanBoard } from '@/components/KanbanBoard';
+import { toast } from 'sonner';
+
+import { MesaDashboard } from '@/components/MesaDashboard';
 import { NewOrderModal } from '@/components/NewOrderModal';
 import { AppHeader } from '@/components/AppHeader';
 import { useAuth } from '@/lib/auth';
@@ -15,7 +17,7 @@ const EMPTY_CART: Record<string, number> = {};
 
 function DashboardPage() {
   const { isAuthenticated, user } = useAuth();
-  const { products } = useAppStore();
+  const { products, mesas } = useAppStore();
 
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
@@ -24,12 +26,15 @@ function DashboardPage() {
     if (!editOrder) return EMPTY_CART;
 
     const cart: Record<string, number> = {};
+
     editOrder.items.forEach((item) => {
-      if (item.productId && products.some((p) => p.id === item.productId)) {
-        cart[item.productId] = item.quantity;
+      if (item.productId && products.some((p) => String(p.id) === String(item.productId))) {
+        cart[String(item.productId)] = item.quantity;
       } else {
         const fallback = products.find((p) => p.name === item.productName);
-        if (fallback) cart[fallback.id] = item.quantity;
+        if (fallback) {
+          cart[String(fallback.id)] = item.quantity;
+        }
       }
     });
 
@@ -42,6 +47,13 @@ function DashboardPage() {
 
   const handleNewOrder = () => {
     setEditOrder(null);
+
+    if (!mesas || mesas.length === 0) {
+      toast.error('Cadastre pelo menos uma mesa antes de abrir um pedido.');
+      setOrderModalOpen(true);
+      return;
+    }
+
     setOrderModalOpen(true);
   };
 
@@ -74,7 +86,7 @@ function DashboardPage() {
           </div>
         </div>
 
-        <KanbanBoard onEditOrder={handleEditOrder} />
+        <MesaDashboard />
       </main>
 
       <NewOrderModal
@@ -84,6 +96,7 @@ function DashboardPage() {
         initialCustomerName={editOrder?.customerName}
         initialCart={initialCart}
         initialNotes={editOrder?.notes}
+        mesaId={editOrder?.mesaId ?? null}
       />
     </div>
   );

@@ -1,6 +1,18 @@
 import { useState, useMemo } from 'react';
 import { useAppStore } from '@/lib/store';
-import { ArrowLeft, CalendarDays, TrendingUp, Receipt, LineChart, Store, Download, Wallet, Banknote, CreditCard, DollarSign } from 'lucide-react';
+import {
+  ArrowLeft,
+  CalendarDays,
+  TrendingUp,
+  Receipt,
+  LineChart,
+  Store,
+  Download,
+  Wallet,
+  Banknote,
+  CreditCard,
+  DollarSign,
+} from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { toast } from 'sonner';
 
@@ -12,7 +24,15 @@ function formatDate(d: Date) {
 }
 
 function toInputDate(d: Date) {
-  return d.toISOString().split('T')[0];
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function fromInputDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0);
 }
 
 function money(v: number) {
@@ -34,8 +54,29 @@ export function ReportsPage() {
   const [endDate, setEndDate] = useState(() => toInputDate(new Date()));
 
   const orders = useMemo(() => {
-    const start = new Date(`${startDate}T00:00:00`);
-    const end = new Date(`${endDate}T23:59:59`);
+    const startBase = fromInputDate(startDate);
+    const endBase = fromInputDate(endDate);
+
+    const start = new Date(
+      startBase.getFullYear(),
+      startBase.getMonth(),
+      startBase.getDate(),
+      0,
+      0,
+      0,
+      0
+    );
+
+    const end = new Date(
+      endBase.getFullYear(),
+      endBase.getMonth(),
+      endBase.getDate(),
+      23,
+      59,
+      59,
+      999
+    );
+
     return getArchivedOrders(start, end);
   }, [startDate, endDate, getArchivedOrders]);
 
@@ -65,13 +106,17 @@ export function ReportsPage() {
 
   const chartData = useMemo(() => {
     const dailyMap: Record<string, number> = {};
+
     paidOrders.forEach((o) => {
       const dateObj = new Date(o.createdAt);
-      const d = `${String(dateObj.getDate()).padStart(2, '0')}/${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+      const d = `${String(dateObj.getDate()).padStart(2, '0')}/${String(
+        dateObj.getMonth() + 1
+      ).padStart(2, '0')}`;
       dailyMap[d] = (dailyMap[d] || 0) + Number(o.total || 0);
     });
 
     if (Object.keys(dailyMap).length === 0) return [];
+
     const data = Object.entries(dailyMap).map(([date, total]) => ({ date, total }));
     return data.slice(-7);
   }, [paidOrders]);
@@ -95,7 +140,13 @@ export function ReportsPage() {
 
     doc.setFontSize(10);
     doc.setTextColor(100, 100, 100);
-    doc.text(`Período analisado: ${formatDate(new Date(startDate))} até ${formatDate(new Date(endDate))}`, 14, 39);
+    doc.text(
+      `Período analisado: ${formatDate(fromInputDate(startDate))} até ${formatDate(
+        fromInputDate(endDate)
+      )}`,
+      14,
+      39
+    );
     doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 44);
 
     autoTable(doc, {
@@ -121,7 +172,10 @@ export function ReportsPage() {
 
     const tableData = paidOrders.map((order: any) => [
       `#${String(order.number).padStart(4, '0')}`,
-      new Date(order.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }),
+      new Date(order.createdAt).toLocaleString('pt-BR', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+      }),
       order.customerName,
       String(order.paymentMethod || 'Não definido').toUpperCase(),
       String(order.paymentMethod || '').toLowerCase() === 'dinheiro'
@@ -186,14 +240,24 @@ export function ReportsPage() {
             <label className="text-xs font-black text-muted-foreground block mb-2 uppercase tracking-widest">
               <CalendarDays className="w-4 h-4 inline mr-1 mb-0.5" /> Data Inicial
             </label>
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputClass} />
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className={inputClass}
+            />
           </div>
 
           <div className="w-full md:flex-1">
             <label className="text-xs font-black text-muted-foreground block mb-2 uppercase tracking-widest">
               <CalendarDays className="w-4 h-4 inline mr-1 mb-0.5" /> Data Final
             </label>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputClass} />
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className={inputClass}
+            />
           </div>
         </div>
 
@@ -223,7 +287,7 @@ export function ReportsPage() {
                 <p className="text-xs font-black text-primary uppercase tracking-widest mb-2">Faturamento Total</p>
                 <p className="text-4xl font-black text-foreground mb-1 tracking-tight">R$ {money(totalRevenue)}</p>
                 <p className="text-xs font-bold text-muted-foreground mt-1 bg-background w-fit px-2 py-1 rounded-md border border-border/50">
-                  {formatDate(new Date(startDate))} — {formatDate(new Date(endDate))}
+                  {formatDate(fromInputDate(startDate))} — {formatDate(fromInputDate(endDate))}
                 </p>
               </div>
 
@@ -321,7 +385,10 @@ export function ReportsPage() {
                     </div>
 
                     <p className="text-sm text-muted-foreground">
-                      {new Date(order.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}
+                      {new Date(order.createdAt).toLocaleString('pt-BR', {
+                        dateStyle: 'short',
+                        timeStyle: 'short',
+                      })}
                     </p>
 
                     <p className="text-sm mt-2 text-muted-foreground/80 italic border-l-2 border-border pl-3 py-0.5">

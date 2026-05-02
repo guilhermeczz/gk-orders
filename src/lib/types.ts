@@ -1,8 +1,8 @@
 export type OrderStatus = 'new' | 'preparing' | 'ready' | 'paid';
-
 export type PaymentMethod = 'dinheiro' | 'pix' | 'credito' | 'debito';
 
 export interface OrderItem {
+  id?: string;
   productId: string;
   productName: string;
   quantity: number;
@@ -37,6 +37,7 @@ export interface Order {
   amountReceived?: number | null;
   changeGiven?: number | null;
   createdBy?: string | null;
+  mesaId?: string | null;
 }
 
 export interface Category {
@@ -57,4 +58,15 @@ export interface User {
   id: string;
   name: string;
   username: string;
+}
+
+export interface Mesa {
+  id: string;
+  numero: number;
+  nome?: string | null;
+  status: 'livre' | 'ocupada';
+  garcomNome?: string | null;
+  ativa?: boolean;
+  createdAt?: string | Date | null;
+  updatedAt?: string | Date | null;
 }

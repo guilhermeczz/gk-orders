@@ -1,8 +1,19 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '@/lib/store';
-import type { OrderItem } from '@/lib/types';
+import type { OrderItem, Product, Mesa } from '@/lib/types';
 import { toast } from 'sonner';
-import { X, Search, Plus, Minus, ArrowLeft, ShoppingBag, Info } from 'lucide-react';
+import {
+  ChevronDown,
+  Store,
+  X,
+  Search,
+  Plus,
+  Minus,
+  ArrowLeft,
+  ShoppingBag,
+  Info,
+  AlertTriangle,
+} from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
 interface NewOrderModalProps {
@@ -14,19 +25,38 @@ interface NewOrderModalProps {
   initialCart?: Record<string, number>;
   initialNotes?: string;
   appendBaseNotes?: string;
+  mesaId?: string | null;
+  mesaNumero?: number | null;
+  forceOrderType?: 'Local' | 'Retirada';
+  hideOrderTypeSelector?: boolean;
 }
+
+const categoryDisplayOrder = [
+  'Lanches de Hambúrguer',
+  'Lanches de Frango',
+  'Lanches de Calabresa',
+  'Lanches Leves',
+  'Lanches Especiais',
+  'Hot Dog',
+  'Adicionais',
+  'Bebidas',
+];
 
 export function NewOrderModal({
   open,
   onClose,
   editOrderId,
+  forceOrderType,
+  hideOrderTypeSelector,
   appendOrderId,
   initialCustomerName,
   initialCart,
   initialNotes,
   appendBaseNotes,
+  mesaId,
+  mesaNumero,
 }: NewOrderModalProps) {
-  const { products, categories, addOrder, updateOrder, appendItemsToOrder } = useAppStore();
+  const { products, categories, mesas, addOrder, updateOrder, appendItemsToOrder } = useAppStore();
   const { user } = useAuth();
 
   const [customerName, setCustomerName] = useState('');
@@ -36,13 +66,49 @@ export function NewOrderModal({
   const [orderType, setOrderType] = useState<'Local' | 'Delivery' | 'Retirada' | ''>('');
   const [loading, setLoading] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
+  const [selectedMesaId, setSelectedMesaId] = useState<string>('');
+  const [mesaDropdownAberto, setMesaDropdownAberto] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const isAppending = !!appendOrderId;
+  const isEditing = !!editOrderId;
+  const isMesaFlow = !!mesaId || !!mesaNumero;
+  const isForcedPickup = forceOrderType === 'Retirada';
+  const isTopAvulsoFlow = !isAppending && !isEditing && !isMesaFlow && !isForcedPickup;
+
+  const mesasDisponiveis = useMemo(() => {
+    const abertasPorMesa = new Set(
+      (mesas ?? [])
+        .filter((mesa) => mesa.ativa !== false)
+        .map((mesa) => String(mesa.id))
+    );
+
+    return (mesas ?? [])
+      .filter((mesa) => abertasPorMesa.has(String(mesa.id)))
+      .sort((a, b) => Number(a.numero) - Number(b.numero));
+  }, [mesas]);
+
+  const selectedMesa = useMemo(() => {
+    if (mesaId) {
+      return mesasDisponiveis.find((m) => String(m.id) === String(mesaId)) ?? null;
+    }
+
+    if (selectedMesaId) {
+      return mesasDisponiveis.find((m) => String(m.id) === String(selectedMesaId)) ?? null;
+    }
+
+    return null;
+  }, [mesaId, mesasDisponiveis, selectedMesaId]);
 
   useEffect(() => {
     if (!open) return;
 
-    setCustomerName(initialCustomerName ?? '');
+    const fallbackCustomer =
+      initialCustomerName ??
+      (mesaNumero ? `Mesa ${mesaNumero}` : '');
+
+    setCustomerName(fallbackCustomer);
 
     const sourceNotes = appendOrderId ? appendBaseNotes ?? '' : initialNotes ?? '';
     let parsedNotes = appendOrderId ? '' : initialNotes ?? '';
@@ -58,42 +124,95 @@ export function NewOrderModal({
       else if (parsedNotes.includes('[RETIRADA]')) parsedNotes = parsedNotes.replace('[RETIRADA]', '').trim();
     }
 
+    if (forceOrderType) {
+      parsedType = forceOrderType;
+    }
+
     setNotes(parsedNotes);
     setOrderType(parsedType);
     setCart(appendOrderId ? {} : initialCart ?? {});
     setSearch('');
     setShowSummary(false);
-  }, [open, editOrderId, appendOrderId]);
+    setMesaDropdownAberto(false);
+
+    if (mesaId) {
+      setSelectedMesaId(String(mesaId));
+    } else {
+      setSelectedMesaId('');
+    }
+  }, [
+    open,
+    editOrderId,
+    appendOrderId,
+    initialCustomerName,
+    initialCart,
+    initialNotes,
+    appendBaseNotes,
+    mesaNumero,
+    mesaId,
+    forceOrderType,
+  ]);
+
+  useEffect(() => {
+    if (selectedMesa && isTopAvulsoFlow) {
+      setCustomerName(`Mesa ${selectedMesa.numero}`);
+      setOrderType('Local');
+    }
+  }, [selectedMesa, isTopAvulsoFlow]);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
+
+    if (showSummary) {
+      setMesaDropdownAberto(false);
+    }
   }, [showSummary]);
 
   const filteredProducts = useMemo(() => {
-    const q = search.toLowerCase();
-    return products.filter((p: any) => {
-      const catId = p.categoryId;
-      const cat: any = categories.find((c: any) => String(c.id) === String(catId));
-      const pName = String(p.name || '').toLowerCase();
-      const cName = String(cat?.name || '').toLowerCase();
-      return pName.includes(q) || cName.includes(q);
+    const q = search.toLowerCase().trim();
+
+    return products.filter((p: Product) => {
+      const category = categories.find((c: any) => String(c.id) === String(p.categoryId));
+      const categoryName = String(category?.name || '').toLowerCase();
+
+      if (!q) return p.active !== false;
+
+      return (
+        p.active !== false &&
+        (
+          String(p.name || '').toLowerCase().includes(q) ||
+          categoryName.includes(q)
+        )
+      );
     });
-  }, [products, search, categories]);
+  }, [products, categories, search]);
 
   const groupedProducts = useMemo(() => {
-    return filteredProducts.reduce((acc, p: any) => {
-      const catId = String(p.categoryId || 'geral');
-      if (!acc[catId]) acc[catId] = [];
-      acc[catId].push(p);
+    const grouped = categories.reduce<Record<string, Product[]>>((acc, category: any) => {
+      const items = filteredProducts
+        .filter((p) => String(p.categoryId) === String(category.id))
+        .sort((a, b) => {
+          if (a.price !== b.price) return a.price - b.price;
+          return a.name.localeCompare(b.name, 'pt-BR');
+        });
+
+      if (items.length > 0) {
+        acc[category.name] = items;
+      }
+
       return acc;
-    }, {} as Record<string, typeof filteredProducts>);
-  }, [filteredProducts]);
+    }, {});
+
+    return categoryDisplayOrder
+      .filter((categoryName) => grouped[categoryName]?.length > 0)
+      .map((categoryName) => [categoryName, grouped[categoryName]] as const);
+  }, [categories, filteredProducts]);
 
   const total = useMemo(() => {
     return Object.entries(cart).reduce((sum, [id, qty]) => {
-      const p: any = products.find((prod: any) => String(prod.id) === String(id));
+      const p = products.find((prod: any) => String(prod.id) === String(id));
       if (!p) return sum;
       return sum + Number(p.price || 0) * qty;
     }, 0);
@@ -102,7 +221,7 @@ export function NewOrderModal({
   const cartItems = useMemo(() => {
     return Object.entries(cart)
       .map(([id, quantity]) => {
-        const p: any = products.find((prod: any) => String(prod.id) === String(id));
+        const p = products.find((prod: any) => String(prod.id) === String(id));
         if (!p) return null;
 
         return {
@@ -129,11 +248,28 @@ export function NewOrderModal({
   };
 
   const handleConfirm = async () => {
-    if (!customerName.trim()) return toast.error('Informe o nome do cliente.');
-    if (cartItems.length === 0) return toast.error('O carrinho está vazio.');
-    if (!orderType) return toast.error('Selecione se o pedido é Local, Delivery ou Retirada.');
+    if (isTopAvulsoFlow && !selectedMesa) {
+      toast.error('Selecione uma mesa criada para abrir o pedido.');
+      return;
+    }
+
+    if (!customerName.trim()) {
+      toast.error('Informe o nome do cliente ou mesa.');
+      return;
+    }
+
+    if (cartItems.length === 0) {
+      toast.error('O carrinho está vazio.');
+      return;
+    }
+
+    if (!orderType) {
+      toast.error('Selecione o tipo do pedido.');
+      return;
+    }
 
     setLoading(true);
+
     try {
       const finalNotes = `[${orderType.toUpperCase()}] ${notes}`.trim();
 
@@ -146,7 +282,8 @@ export function NewOrderModal({
           customerName.trim(),
           cartItems,
           finalNotes,
-          user?.name || user?.username || 'Operador'
+          user?.name || user?.username || 'Operador',
+          selectedMesa?.id ?? mesaId ?? null
         );
       }
 
@@ -161,24 +298,34 @@ export function NewOrderModal({
 
   if (!open) return null;
 
-  const getCategoryLabel = (catId: string) => {
-    const cat: any = categories.find((c: any) => String(c.id) === String(catId));
-    const nomeCategoria = cat?.name || 'Geral';
-    const emoji = cat?.emoji ? `${cat.emoji} ` : '';
-    return `${emoji}${nomeCategoria}`;
-  };
-
   const formatMoney = (val: number) =>
-    new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+    new Intl.NumberFormat('pt-BR', {
+      style: 'currency',
+      currency: 'BRL',
+    }).format(val);
 
   const title = appendOrderId
     ? 'Adicionar Itens ao Pedido'
     : editOrderId
       ? 'Editando Pedido'
-      : 'Montar Novo Pedido';
+      : mesaNumero
+        ? `Abrir Mesa ${mesaNumero}`
+        : isForcedPickup
+          ? 'Novo Pedido de Retirada'
+          : 'Montar Novo Pedido';
+
+  const canProceed =
+    cartItems.length > 0 &&
+    (
+      isAppending ||
+      isEditing ||
+      isMesaFlow ||
+      isForcedPickup ||
+      !!selectedMesa
+    );
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 sm:p-6 animate-fade-in">
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 sm:p-6 animate-fade-in">
       <div className="w-full max-w-5xl h-full max-h-[90vh] bg-background rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-slide-up border border-border/50">
         <div className="flex justify-between items-center px-6 py-5 border-b border-border/50 bg-card/50 backdrop-blur-sm z-10">
           <h2 className="text-2xl font-bold flex items-center gap-3 text-foreground tracking-tight">
@@ -186,6 +333,7 @@ export function NewOrderModal({
               <button
                 onClick={() => setShowSummary(false)}
                 className="mr-2 p-2 hover:bg-muted rounded-full transition-all hover:-translate-x-1"
+                type="button"
               >
                 <ArrowLeft className="w-5 h-5" />
               </button>
@@ -199,44 +347,64 @@ export function NewOrderModal({
           <button
             onClick={onClose}
             className="p-2.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive rounded-xl transition-all hover:rotate-90"
+            type="button"
           >
             <X className="w-6 h-6" />
           </button>
         </div>
 
-        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 scroll-smooth custom-scrollbar">
+        <div
+          ref={scrollRef}
+          className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 scroll-smooth custom-scrollbar"
+        >
           {showSummary ? (
             <div className="max-w-2xl mx-auto space-y-6 animate-fade-in">
               <div className="bg-card p-6 rounded-3xl border border-border/60 shadow-sm">
                 <h3 className="font-semibold text-muted-foreground mb-4 uppercase tracking-wider text-sm flex items-center gap-2">
-                  <Info className="w-4 h-4" /> 1. Tipo de Atendimento <span className="text-destructive">*</span>
+                  <Info className="w-4 h-4" /> 1. Tipo de Atendimento
                 </h3>
 
-                <div className="grid grid-cols-3 gap-3 sm:gap-4">
-                  {['Local', 'Delivery', 'Retirada'].map((type) => (
-                    <button
-                      key={type}
-                      onClick={() => setOrderType(type as any)}
-                      className={`py-4 rounded-2xl border-2 font-bold transition-all duration-300 ${
-                        orderType === type
-                          ? 'bg-primary/10 border-primary text-primary shadow-[0_4px_15px_rgba(255,106,0,0.15)] scale-[1.02] transform'
-                          : 'bg-background border-border/50 text-muted-foreground hover:border-primary/40 hover:bg-muted/50'
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
+                {hideOrderTypeSelector ? (
+                  <div className="rounded-2xl border border-primary/30 bg-primary/10 px-4 py-4 text-center">
+                    <span className="font-black text-primary">{orderType || forceOrderType}</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 sm:gap-4">
+                    {['Local', 'Retirada'].map((type) => (
+                      <button
+                        key={type}
+                        onClick={() => setOrderType(type as 'Local' | 'Retirada')}
+                        disabled={isTopAvulsoFlow}
+                        className={`py-4 rounded-2xl border-2 font-bold transition-all duration-300 ${
+                          orderType === type
+                            ? 'bg-primary/10 border-primary text-primary shadow-[0_4px_15px_rgba(255,106,0,0.15)] scale-[1.02] transform'
+                            : 'bg-background border-border/50 text-muted-foreground hover:border-primary/40 hover:bg-muted/50'
+                        } ${isTopAvulsoFlow ? 'opacity-60 cursor-not-allowed' : ''}`}
+                        type="button"
+                      >
+                        {type}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {isTopAvulsoFlow && (
+                  <p className="mt-3 text-xs text-amber-400">
+                    Pedidos abertos por aqui são sempre vinculados a uma mesa criada. Para retirada, use a aba principal de retirada.
+                  </p>
+                )}
               </div>
 
               <div className="bg-card p-6 rounded-3xl border border-border/60 shadow-sm">
                 <h3 className="font-semibold text-muted-foreground mb-4 uppercase tracking-wider text-sm">
-                  2. Cliente e Observações
+                  2. Cliente e Mesa
                 </h3>
 
-                <p className="text-sm text-muted-foreground mb-1">Nome na comanda/mesa:</p>
+                <p className="text-sm text-muted-foreground mb-1">
+                  {selectedMesa ? 'Mesa selecionada:' : 'Nome na comanda/mesa:'}
+                </p>
                 <p className="font-bold text-xl text-foreground bg-background p-4 rounded-xl border border-border/40">
-                  {customerName}
+                  {customerName || 'Não informado'}
                 </p>
 
                 {notes && (
@@ -276,103 +444,252 @@ export function NewOrderModal({
             </div>
           ) : (
             <div className="animate-fade-in">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-8 bg-card p-5 sm:p-6 rounded-3xl border border-border/60 shadow-sm">
-                <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-2 block uppercase tracking-wider">
-                    Cliente ou Mesa
-                  </label>
-                  <input
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    placeholder="Ex: Mesa 04 ou João"
-                    className="w-full bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all font-medium text-[15px]"
-                  />
+              {isTopAvulsoFlow && mesasDisponiveis.length === 0 ? (
+                <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-6 shadow-sm mb-8">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-amber-400 mt-0.5" />
+                    <div>
+                      <p className="text-lg font-black text-amber-300">
+                        Nenhuma mesa cadastrada
+                      </p>
+                      <p className="text-sm text-amber-100/80 mt-1">
+                        Antes de abrir um pedido, crie pelo menos uma mesa na tela principal.
+                      </p>
+                    </div>
+                  </div>
                 </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-8 bg-card p-5 sm:p-6 rounded-3xl border border-border/60 shadow-sm">
+                    <div>
+                      <label className="text-xs font-bold text-muted-foreground mb-2 block uppercase tracking-wider">
+                        {isTopAvulsoFlow ? 'Selecionar Mesa' : 'Cliente ou Mesa'}
+                      </label>
 
-                <div>
-                  <label className="text-xs font-bold text-muted-foreground mb-2 block uppercase tracking-wider">
-                    Pesquisar Cardápio
-                  </label>
-                  <div className="relative group">
-                    <Search className="absolute left-4 top-4 w-5 h-5 text-gray-400 group-focus-within:text-primary transition-colors" />
-                    <input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Buscar lanche, bebida..."
-                      className="w-full bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl pl-12 pr-5 py-4 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all font-medium text-[15px]"
+                      {isTopAvulsoFlow ? (
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setMesaDropdownAberto((prev) => !prev)}
+                            className={`
+                              w-full min-h-[58px]
+                              flex items-center justify-between gap-4
+                              rounded-2xl
+                              border
+                              px-5 py-4
+                              text-left
+                              outline-none
+                              transition-all duration-200
+                              bg-[#111111]/95
+                              text-white
+                              shadow-[0_0_28px_rgba(255,106,0,0.08)]
+                              ${
+                                mesaDropdownAberto
+                                  ? 'border-primary ring-4 ring-primary/10 shadow-[0_0_34px_rgba(255,106,0,0.18)]'
+                                  : 'border-border/60 hover:border-primary/60 hover:shadow-[0_0_30px_rgba(255,106,0,0.12)]'
+                              }
+                            `}
+                          >
+                            <span
+                              className={`truncate text-[15px] font-semibold ${
+                                selectedMesa ? 'text-white' : 'text-zinc-300'
+                              }`}
+                            >
+                              {selectedMesa
+                                ? `Mesa ${selectedMesa.numero}${selectedMesa.garcomNome ? ` • ${selectedMesa.garcomNome}` : ''}`
+                                : 'Selecione uma mesa criada'}
+                            </span>
+
+                            <ChevronDown
+                              className={`h-5 w-5 shrink-0 text-primary transition-transform duration-200 ${
+                                mesaDropdownAberto ? 'rotate-180' : ''
+                              }`}
+                            />
+                          </button>
+
+                          {mesaDropdownAberto && (
+                            <div
+                              className="
+                                absolute left-0 right-0 top-[66px] z-[9999]
+                                overflow-hidden
+                                rounded-2xl
+                                border border-primary/80
+                                bg-[#101010]
+                                shadow-[0_20px_55px_rgba(0,0,0,0.78),0_0_34px_rgba(255,106,0,0.20)]
+                              "
+                            >
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedMesaId('');
+                                  setMesaDropdownAberto(false);
+                                }}
+                                className="
+                                  flex w-full items-center gap-3
+                                  px-5 py-4
+                                  text-left
+                                  text-primary
+                                  transition-colors
+                                  bg-primary/10
+                                  hover:bg-primary/15
+                                "
+                              >
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/60 text-primary">
+                                  <Store className="h-4 w-4" />
+                                </span>
+                                <span className="truncate text-[15px] font-bold">
+                                  Selecione uma mesa criada
+                                </span>
+                              </button>
+
+                              {mesasDisponiveis.map((mesa: Mesa) => {
+                                const mesaAtiva = String(selectedMesaId) === String(mesa.id);
+
+                                return (
+                                  <button
+                                    key={mesa.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedMesaId(String(mesa.id));
+                                      setMesaDropdownAberto(false);
+                                    }}
+                                    className={`
+                                      flex w-full items-center gap-3
+                                      px-5 py-4
+                                      text-left
+                                      transition-colors
+                                      hover:bg-white/[0.06]
+                                      ${mesaAtiva ? 'bg-primary/15 text-primary' : 'text-white'}
+                                    `}
+                                  >
+                                    <span
+                                      className={`
+                                        flex h-8 w-8 shrink-0 items-center justify-center
+                                        rounded-lg border
+                                        ${
+                                          mesaAtiva
+                                            ? 'border-primary/80 text-primary'
+                                            : 'border-white/25 text-zinc-400'
+                                        }
+                                      `}
+                                    >
+                                      <Store className="h-4 w-4" />
+                                    </span>
+
+                                    <span className="truncate text-[15px] font-bold">
+                                      Mesa {mesa.numero}{mesa.garcomNome ? ` • ${mesa.garcomNome}` : ''}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <input
+                          value={customerName}
+                          onChange={(e) => setCustomerName(e.target.value)}
+                          disabled={!!mesaNumero}
+                          placeholder={mesaNumero ? `Mesa ${mesaNumero}` : 'Nome ou mesa...'}
+                          className="w-full bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all font-medium text-[15px] disabled:opacity-70"
+                        />
+                      )}
+
+                      {isTopAvulsoFlow && selectedMesa && (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Pedido será aberto na <span className="font-bold">Mesa {selectedMesa.numero}</span>.
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-muted-foreground mb-2 block uppercase tracking-wider">
+                        Pesquisar Cardápio
+                      </label>
+                      <div className="relative group">
+                        <Search className="absolute left-4 top-4 w-5 h-5 text-gray-400 group-focus-within:text-primary transition-colors" />
+                        <input
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                          placeholder="Buscar lanche, bebida..."
+                          className="w-full bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl pl-12 pr-5 py-4 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all font-medium text-[15px]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-8">
+                    {groupedProducts.map(([categoryName, prods]) => (
+                      <div key={categoryName} className="space-y-4">
+                        <div className="flex items-center gap-4 py-2">
+                          <div className="h-px flex-1 bg-gradient-to-r from-transparent to-border/80"></div>
+                          <h3 className="font-bold text-lg text-primary px-4 py-1.5 bg-primary/5 border border-primary/20 rounded-full tracking-tight shadow-sm">
+                            {categoryName}
+                          </h3>
+                          <div className="h-px flex-1 bg-gradient-to-l from-transparent to-border/80"></div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                          {prods.map((p) => {
+                            const safeId = String(p.id);
+                            const qty = cart[safeId] || 0;
+                            const pName = p.name;
+                            const pPrice = Number(p.price || 0);
+
+                            return (
+                              <div
+                                key={safeId}
+                                className="flex justify-between items-center p-4 bg-card border border-border/50 rounded-2xl transition-all duration-300 hover:border-primary/40 hover:shadow-md hover:-translate-y-0.5 group"
+                              >
+                                <div className="flex flex-col gap-1 pr-3">
+                                  <span className="font-semibold text-[15px] leading-tight text-foreground group-hover:text-primary transition-colors">
+                                    {pName}
+                                  </span>
+                                  <span className="text-[13px] font-medium text-muted-foreground">
+                                    {formatMoney(pPrice)}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-3 bg-background border border-border/40 p-1.5 rounded-2xl shadow-sm">
+                                  <button
+                                    onClick={() => updateQty(safeId, -1)}
+                                    className="w-8 h-8 flex items-center justify-center bg-muted/50 rounded-xl hover:text-destructive hover:bg-destructive/10 transition-colors"
+                                    type="button"
+                                  >
+                                    <Minus className="w-4 h-4" />
+                                  </button>
+
+                                  <span className="w-4 text-center font-bold text-[15px]">{qty}</span>
+
+                                  <button
+                                    onClick={() => updateQty(safeId, 1)}
+                                    className="w-8 h-8 flex items-center justify-center bg-primary text-primary-foreground rounded-xl shadow-sm hover:opacity-90 transition-transform active:scale-95"
+                                    type="button"
+                                  >
+                                    <Plus className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-8 bg-card p-5 sm:p-6 rounded-3xl border border-border/60 shadow-sm">
+                    <label className="text-xs font-bold text-muted-foreground mb-3 block uppercase tracking-wider">
+                      Anotações para a Cozinha
+                    </label>
+                    <textarea
+                      value={notes}
+                      onChange={(e) => setNotes(e.target.value)}
+                      placeholder="Ex: sem cebola, sem molho..."
+                      className="w-full bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all h-28 resize-none font-medium text-[15px]"
                     />
                   </div>
-                </div>
-              </div>
-
-              <div className="space-y-8">
-                {Object.entries(groupedProducts).map(([catId, prods]: any) => (
-                  <div key={catId} className="space-y-4">
-                    <div className="flex items-center gap-4 py-2">
-                      <div className="h-px flex-1 bg-gradient-to-r from-transparent to-border/80"></div>
-                      <h3 className="font-bold text-lg text-primary px-4 py-1.5 bg-primary/5 border border-primary/20 rounded-full tracking-tight shadow-sm">
-                        {getCategoryLabel(catId)}
-                      </h3>
-                      <div className="h-px flex-1 bg-gradient-to-l from-transparent to-border/80"></div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                      {prods.map((p: any) => {
-                        const safeId = String(p.id);
-                        const qty = cart[safeId] || 0;
-                        const pName = p.name;
-                        const pPrice = Number(p.price || 0);
-
-                        return (
-                          <div
-                            key={safeId}
-                            className="flex justify-between items-center p-4 bg-card border border-border/50 rounded-2xl transition-all duration-300 hover:border-primary/40 hover:shadow-md hover:-translate-y-0.5 group"
-                          >
-                            <div className="flex flex-col gap-1 pr-3">
-                              <span className="font-semibold text-[15px] leading-tight text-foreground group-hover:text-primary transition-colors">
-                                {pName}
-                              </span>
-                              <span className="text-[13px] font-medium text-muted-foreground">
-                                {formatMoney(pPrice)}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-3 bg-background border border-border/40 p-1.5 rounded-2xl shadow-sm">
-                              <button
-                                onClick={() => updateQty(safeId, -1)}
-                                className="w-8 h-8 flex items-center justify-center bg-muted/50 rounded-xl hover:text-destructive hover:bg-destructive/10 transition-colors"
-                              >
-                                <Minus className="w-4 h-4" />
-                              </button>
-
-                              <span className="w-4 text-center font-bold text-[15px]">{qty}</span>
-
-                              <button
-                                onClick={() => updateQty(safeId, 1)}
-                                className="w-8 h-8 flex items-center justify-center bg-primary text-primary-foreground rounded-xl shadow-sm hover:opacity-90 transition-transform active:scale-95"
-                              >
-                                <Plus className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-8 bg-card p-5 sm:p-6 rounded-3xl border border-border/60 shadow-sm">
-                <label className="text-xs font-bold text-muted-foreground mb-3 block uppercase tracking-wider">
-                  Anotações para a Cozinha
-                </label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  placeholder="Ex: sem cebola, sem molho..."
-                  className="w-full bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 focus:border-primary focus:ring-4 focus:ring-primary/10 outline-none transition-all h-28 resize-none font-medium text-[15px]"
-                />
-              </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -381,19 +698,32 @@ export function NewOrderModal({
           {!showSummary ? (
             <button
               onClick={() => setShowSummary(true)}
-              className="w-full py-4 sm:py-5 bg-primary text-primary-foreground font-black rounded-2xl text-[17px] sm:text-lg shadow-lg hover:shadow-[0_8px_25px_rgba(255,106,0,0.3)] transition-all duration-300 hover:-translate-y-1 active:scale-95 flex justify-between px-6 sm:px-8 items-center"
+              disabled={!canProceed}
+              className="w-full py-4 sm:py-5 bg-primary text-primary-foreground font-black rounded-2xl text-[17px] sm:text-lg shadow-lg hover:shadow-[0_8px_25px_rgba(255,106,0,0.3)] transition-all duration-300 hover:-translate-y-1 active:scale-95 flex justify-between px-6 sm:px-8 items-center disabled:opacity-50 disabled:hover:translate-y-0"
+              type="button"
             >
               <span>Avançar para Revisão</span>
-              <span className="bg-black/20 px-3 py-1.5 rounded-xl backdrop-blur-sm">{formatMoney(total)}</span>
+              <span className="bg-black/20 px-3 py-1.5 rounded-xl backdrop-blur-sm">
+                {formatMoney(total)}
+              </span>
             </button>
           ) : (
             <button
               onClick={handleConfirm}
               disabled={loading || cartItems.length === 0}
               className="w-full py-4 sm:py-5 bg-green-600 text-white font-black rounded-2xl text-[17px] sm:text-lg shadow-lg hover:bg-green-500 hover:shadow-[0_8px_25px_rgba(34,197,94,0.3)] transition-all duration-300 hover:-translate-y-1 active:scale-95 flex justify-between px-6 sm:px-8 items-center disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none"
+              type="button"
             >
-              <span>{loading ? 'Enviando...' : appendOrderId ? 'Confirmar Adicional' : 'Confirmar e Enviar'}</span>
-              <span className="bg-black/20 px-3 py-1.5 rounded-xl backdrop-blur-sm">{formatMoney(total)}</span>
+              <span>
+                {loading
+                  ? 'Enviando...'
+                  : appendOrderId
+                    ? 'Confirmar Adicional'
+                    : 'Confirmar e Enviar'}
+              </span>
+              <span className="bg-black/20 px-3 py-1.5 rounded-xl backdrop-blur-sm">
+                {formatMoney(total)}
+              </span>
             </button>
           )}
         </div>

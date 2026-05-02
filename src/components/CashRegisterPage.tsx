@@ -27,7 +27,10 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 function toInputDate(d: Date) {
-  return d.toISOString().split('T')[0];
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 function money(v: number) {
@@ -74,8 +77,8 @@ export function CashRegisterPage() {
   };
 
   const fetchHistoryByDate = async () => {
-    const start = new Date(`${historyDate}T00:00:00`).toISOString();
-    const end = new Date(`${historyDate}T23:59:59.999`).toISOString();
+    const start = `${historyDate}T00:00:00-03:00`;
+    const end = `${historyDate}T23:59:59.999-03:00`;
 
     const { data, error } = await supabase
       .from('cash_sessions')
@@ -265,7 +268,7 @@ export function CashRegisterPage() {
     doc.setFontSize(10);
     doc.setTextColor(100, 100, 100);
     doc.text(
-      `Data analisada: ${new Date(historyDate + 'T12:00:00').toLocaleDateString('pt-BR')}`,
+      `Data analisada: ${new Date(`${historyDate}T12:00:00`).toLocaleDateString('pt-BR')}`,
       14,
       39
     );
