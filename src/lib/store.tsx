@@ -71,10 +71,10 @@ interface AppState {
   ) => Promise<void>;
 
   payOrdersBulk: (
-  orderIds: string[],
-  paymentMethod: PaymentMethod,
-  cashMeta?: CashPaymentMeta
-) => Promise<void>;
+    orderIds: string[],
+    paymentMethod: PaymentMethod,
+    cashMeta?: CashPaymentMeta
+  ) => Promise<void>;
 
   addProduct: (product: Omit<Product, 'id'>) => Promise<boolean>;
   updateProduct: (product: Product) => Promise<void>;
@@ -213,7 +213,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const itemRows = Array.isArray(o.pedido_itens) ? o.pedido_itens : [];
 
         const sortedItems = [...itemRows].sort((a: any, b: any) => {
-          const batchCompare = Number(a.batch_number || 1) - Number(b.batch_number || 1);
+          const batchCompare =
+            Number(a.batch_number || 1) - Number(b.batch_number || 1);
+
           if (batchCompare !== 0) return batchCompare;
 
           const aTime = a.batch_created_at
@@ -285,13 +287,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
           createdAt: o.created_at ? new Date(o.created_at) : new Date(),
           paidAt: o.paid_at ? new Date(o.paid_at) : undefined,
           cashSessionId: o.cash_session_id ?? null,
-          amountReceived: o.amount_received != null ? Number(o.amount_received) : null,
+          amountReceived:
+            o.amount_received != null ? Number(o.amount_received) : null,
           changeGiven: o.change_given != null ? Number(o.change_given) : null,
           createdBy: o.created_by ?? null,
-          mesaId: o.mesa_id ?? null,
+          mesaId: o.mesa_id ? String(o.mesa_id) : null,
           items: allItems,
           itemBatches: Array.from(groupedBatches.values()).sort(
-            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+            (a, b) =>
+              new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           ),
         };
       });
@@ -308,36 +312,74 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let isMounted = true;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const refreshNow = () => {
+      if (!isMounted) return;
+
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+
+      refreshTimer = setTimeout(async () => {
+        if (!isMounted) return;
+
+        try {
+          await fetchData();
+        } catch (error) {
+          console.error('Erro ao sincronizar dados em tempo real:', error);
+        }
+      }, 150);
+    };
 
     const channel = supabase
-      .channel(`operacional-sync-${crypto.randomUUID()}`)
+      .channel('gardens-operacional-realtime')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'pedidos' },
-        async () => {
-          if (isMounted) await fetchData();
-        }
+        refreshNow
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'pedido_itens' },
-        async () => {
-          if (isMounted) await fetchData();
-        }
+        refreshNow
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'mesas' },
-        async () => {
-          if (isMounted) await fetchData();
-        }
+        refreshNow
       )
       .subscribe((status) => {
-        console.log('Realtime operacional:', status);
+        console.log('Realtime Gardens:', status);
+
+        if (status === 'SUBSCRIBED') {
+          refreshNow();
+        }
       });
+
+    const handleFocus = () => {
+      refreshNow();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshNow();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       isMounted = false;
+
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
+
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+
       void supabase.removeChannel(channel);
     };
   }, [fetchData]);
@@ -350,7 +392,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       createdBy?: string,
       mesaId?: string | null
     ) => {
-      const total = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+      const total = items.reduce(
+        (sum, item) => sum + item.quantity * item.unitPrice,
+        0
+      );
+
       const safeCreatedBy = String(createdBy || '').trim() || 'Operador';
 
       const { data: order, error } = await supabase
@@ -371,7 +417,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (error) throw error;
 
       if (mesaId) {
-        const mesaAtual = mesas.find((m) => m.id === mesaId);
+        const mesaAtual = mesas.find((m) => String(m.id) === String(mesaId));
 
         const { error: mesaError } = await supabase
           .from('mesas')
@@ -396,7 +442,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch_created_at: new Date().toISOString(),
       }));
 
-      const { error: itemsError } = await supabase.from('pedido_itens').insert(itemsToInsert);
+      const { error: itemsError } = await supabase
+        .from('pedido_itens')
+        .insert(itemsToInsert);
+
       if (itemsError) throw itemsError;
 
       await fetchData();
@@ -406,8 +455,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const updateOrder = useCallback(
-    async (orderId: string, customerName: string, items: OrderItem[], notes: string = '') => {
-      const total = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+    async (
+      orderId: string,
+      customerName: string,
+      items: OrderItem[],
+      notes: string = ''
+    ) => {
+      const total = items.reduce(
+        (sum, item) => sum + item.quantity * item.unitPrice,
+        0
+      );
 
       const { error: orderError } = await supabase
         .from('pedidos')
@@ -438,7 +495,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch_created_at: new Date().toISOString(),
       }));
 
-      const { error: insertError } = await supabase.from('pedido_itens').insert(itemsToInsert);
+      const { error: insertError } = await supabase
+        .from('pedido_itens')
+        .insert(itemsToInsert);
+
       if (insertError) throw insertError;
 
       await fetchData();
@@ -449,7 +509,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const appendItemsToOrder = useCallback(
     async (orderId: string, items: OrderItem[], notes: string = '') => {
-      const order = orders.find((o) => o.id === orderId);
+      const order = orders.find((o) => String(o.id) === String(orderId));
       if (!order) throw new Error('Pedido não encontrado.');
 
       const nextBatchNumber =
@@ -457,7 +517,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ? order.itemBatches.length + 1
           : 2;
 
-      const additionalTotal = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+      const additionalTotal = items.reduce(
+        (sum, item) => sum + item.quantity * item.unitPrice,
+        0
+      );
+
       const nextTotal = Number(order.total || 0) + additionalTotal;
 
       const { error: updateError } = await supabase
@@ -482,7 +546,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch_created_at: nowIso,
       }));
 
-      const { error: insertError } = await supabase.from('pedido_itens').insert(itemsToInsert);
+      const { error: insertError } = await supabase
+        .from('pedido_itens')
+        .insert(itemsToInsert);
+
       if (insertError) throw insertError;
 
       await fetchData();
@@ -502,17 +569,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
 
         const targetOrder = orders.find((order) =>
-          (order.items ?? []).some((item) => item.id === itemId)
+          (order.items ?? []).some((item) => String(item.id) === String(itemId))
         );
 
         if (!targetOrder) {
-          toast.error('Item não encontrado.');
-          return;
-        }
-
-        const currentItem = targetOrder.items.find((item) => item.id === itemId);
-
-        if (!currentItem) {
           toast.error('Item não encontrado.');
           return;
         }
@@ -527,7 +587,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (updateError) throw updateError;
 
         const updatedItems = targetOrder.items.map((item) =>
-          item.id === itemId ? { ...item, quantity: qty } : item
+          String(item.id) === String(itemId) ? { ...item, quantity: qty } : item
         );
 
         const newTotal = updatedItems.reduce(
@@ -558,7 +618,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (itemId: string) => {
       try {
         const targetOrder = orders.find((order) =>
-          (order.items ?? []).some((item) => item.id === itemId)
+          (order.items ?? []).some((item) => String(item.id) === String(itemId))
         );
 
         if (!targetOrder) {
@@ -566,7 +626,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        const remainingItems = (targetOrder.items ?? []).filter((item) => item.id !== itemId);
+        const remainingItems = (targetOrder.items ?? []).filter(
+          (item) => String(item.id) !== String(itemId)
+        );
 
         const { error: deleteError } = await supabase
           .from('pedido_itens')
@@ -586,8 +648,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (targetOrder.mesaId) {
             const hasOtherOpenOrders = orders.some(
               (order) =>
-                order.id !== targetOrder.id &&
-                order.mesaId === targetOrder.mesaId &&
+                String(order.id) !== String(targetOrder.id) &&
+                String(order.mesaId) === String(targetOrder.mesaId) &&
                 order.status !== 'paid'
             );
 
@@ -647,7 +709,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteOrder = useCallback(
     async (orderId: string) => {
-      const targetOrder = orders.find((order) => order.id === orderId);
+      const targetOrder = orders.find(
+        (order) => String(order.id) === String(orderId)
+      );
 
       const { error } = await supabase.from('pedidos').delete().eq('id', orderId);
       if (error) throw error;
@@ -655,8 +719,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (targetOrder?.mesaId) {
         const hasOtherOpenOrders = orders.some(
           (order) =>
-            order.id !== orderId &&
-            order.mesaId === targetOrder.mesaId &&
+            String(order.id) !== String(orderId) &&
+            String(order.mesaId) === String(targetOrder.mesaId) &&
             order.status !== 'paid'
         );
 
@@ -684,7 +748,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (
       orderId: string,
       paymentMethod: PaymentMethod,
-      cashMeta?: { amountReceived?: number; changeGiven?: number }
+      cashMeta?: CashPaymentMeta
     ) => {
       try {
         let cashSessionId: number | null = null;
@@ -726,13 +790,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (error) throw error;
 
-        const targetOrder = orders.find((o) => o.id === orderId);
+        const targetOrder = orders.find(
+          (o) => String(o.id) === String(orderId)
+        );
 
         if (targetOrder?.mesaId) {
           const stillHasOpenOrders = orders.some(
             (o) =>
-              o.id !== orderId &&
-              o.mesaId === targetOrder.mesaId &&
+              String(o.id) !== String(orderId) &&
+              String(o.mesaId) === String(targetOrder.mesaId) &&
               o.status !== 'paid'
           );
 
@@ -761,95 +827,99 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const payOrdersBulk = useCallback(
-  async (
-    orderIds: string[],
-    paymentMethod: PaymentMethod,
-    cashMeta?: { amountReceived?: number; changeGiven?: number }
-  ) => {
-    try {
-      const validIds = orderIds.filter(Boolean);
+    async (
+      orderIds: string[],
+      paymentMethod: PaymentMethod,
+      cashMeta?: CashPaymentMeta
+    ) => {
+      try {
+        const validIds = orderIds.filter(Boolean);
 
-      if (validIds.length === 0) {
-        toast.error('Nenhum pedido informado para pagamento.');
-        return;
-      }
+        if (validIds.length === 0) {
+          toast.error('Nenhum pedido informado para pagamento.');
+          return;
+        }
 
-      let cashSessionId: number | null = null;
+        let cashSessionId: number | null = null;
 
-      const { data: openSession, error: openSessionError } = await supabase
-        .from('cash_sessions')
-        .select('id')
-        .eq('status', 'open')
-        .order('id', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        const { data: openSession, error: openSessionError } = await supabase
+          .from('cash_sessions')
+          .select('id')
+          .eq('status', 'open')
+          .order('id', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      if (openSessionError) throw openSessionError;
+        if (openSessionError) throw openSessionError;
 
-      if (openSession?.id) {
-        cashSessionId = openSession.id;
-      }
+        if (openSession?.id) {
+          cashSessionId = openSession.id;
+        }
 
-      const updatePayload: any = {
-        status: 'paid',
-        pago: true,
-        forma_pagamento: paymentMethod,
-        paid_at: new Date().toISOString(),
-        cash_session_id: cashSessionId,
-      };
+        const updatePayload: any = {
+          status: 'paid',
+          pago: true,
+          forma_pagamento: paymentMethod,
+          paid_at: new Date().toISOString(),
+          cash_session_id: cashSessionId,
+        };
 
-      if (paymentMethod === 'dinheiro') {
-        updatePayload.amount_received = Number(cashMeta?.amountReceived || 0);
-        updatePayload.change_given = Number(cashMeta?.changeGiven || 0);
-      } else {
-        updatePayload.amount_received = null;
-        updatePayload.change_given = null;
-      }
+        if (paymentMethod === 'dinheiro') {
+          updatePayload.amount_received = Number(cashMeta?.amountReceived || 0);
+          updatePayload.change_given = Number(cashMeta?.changeGiven || 0);
+        } else {
+          updatePayload.amount_received = null;
+          updatePayload.change_given = null;
+        }
 
-      const { error } = await supabase
-        .from('pedidos')
-        .update(updatePayload)
-        .in('id', validIds);
+        const { error } = await supabase
+          .from('pedidos')
+          .update(updatePayload)
+          .in('id', validIds);
 
-      if (error) throw error;
+        if (error) throw error;
 
-      const pedidosPagos = orders.filter((o) => validIds.includes(o.id));
-      const mesaIds = Array.from(
-        new Set(
-          pedidosPagos
-            .map((o) => o.mesaId)
-            .filter((mesaId): mesaId is string => Boolean(mesaId))
-        )
-      );
+        const pedidosPagos = orders.filter((o) => validIds.includes(o.id));
 
-      for (const mesaId of mesaIds) {
-        const hasOtherOpenOrders = orders.some(
-          (o) => !validIds.includes(o.id) && o.mesaId === mesaId && o.status !== 'paid'
+        const mesaIds = Array.from(
+          new Set(
+            pedidosPagos
+              .map((o) => o.mesaId)
+              .filter((mesaId): mesaId is string => Boolean(mesaId))
+          )
         );
 
-        if (!hasOtherOpenOrders) {
-          const { error: mesaError } = await supabase
-            .from('mesas')
-            .update({
-              status: 'livre',
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', mesaId);
+        for (const mesaId of mesaIds) {
+          const hasOtherOpenOrders = orders.some(
+            (o) =>
+              !validIds.includes(o.id) &&
+              String(o.mesaId) === String(mesaId) &&
+              o.status !== 'paid'
+          );
 
-          if (mesaError) throw mesaError;
+          if (!hasOtherOpenOrders) {
+            const { error: mesaError } = await supabase
+              .from('mesas')
+              .update({
+                status: 'livre',
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', mesaId);
+
+            if (mesaError) throw mesaError;
+          }
         }
-      }
 
-      await fetchData();
-      toast.success('Pagamento da mesa finalizado!');
-    } catch (error) {
-      console.error('Erro ao pagar pedidos em lote:', error);
-      toast.error('Não foi possível finalizar os pedidos da mesa.');
-      throw error;
-    }
-  },
-  [fetchData, orders]
-);
+        await fetchData();
+        toast.success('Pagamento da mesa finalizado!');
+      } catch (error) {
+        console.error('Erro ao pagar pedidos em lote:', error);
+        toast.error('Não foi possível finalizar os pedidos da mesa.');
+        throw error;
+      }
+    },
+    [fetchData, orders]
+  );
 
   const addProduct = useCallback(
     async (product: Omit<Product, 'id'>) => {
@@ -991,14 +1061,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteUser = useCallback(
     async (id: string) => {
-      const targetUser = users.find((u) => u.id === id);
+      const targetUser = users.find((u) => String(u.id) === String(id));
 
       const isProtected =
         targetUser &&
-        (
-          String(targetUser.name || '').trim().toLowerCase() === 'desenvolvedor' ||
-          String(targetUser.username || '').trim().toLowerCase() === 'dev'
-        );
+        (String(targetUser.name || '').trim().toLowerCase() === 'desenvolvedor' ||
+          String(targetUser.username || '').trim().toLowerCase() === 'dev');
 
       if (isProtected) {
         toast.error('O acesso do Desenvolvedor é protegido e não pode ser removido.');
@@ -1109,6 +1177,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         );
 
         const rows = [];
+
         for (let numero = ini; numero <= fim; numero++) {
           if (!numerosExistentes.has(numero)) {
             rows.push({
@@ -1174,49 +1243,50 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [fetchMesas]
   );
 
-const deleteMesa = useCallback(
-  async (mesaId: string) => {
-    const hasOpenOrder = orders.some(
-      (order) => order.mesaId === mesaId && order.status !== 'paid'
-    );
+  const deleteMesa = useCallback(
+    async (mesaId: string) => {
+      const hasOpenOrder = orders.some(
+        (order) =>
+          String(order.mesaId) === String(mesaId) && order.status !== 'paid'
+      );
 
-    if (hasOpenOrder) {
-      toast.error('Não é possível excluir uma mesa com consumo em aberto.');
-      return;
-    }
-
-    try {
-      const { error: unlinkError } = await supabase
-        .from('pedidos')
-        .update({ mesa_id: null })
-        .eq('mesa_id', mesaId);
-
-      if (unlinkError) {
-        console.error('Erro ao desvincular pedidos da mesa:', unlinkError);
-        toast.error('Não foi possível desvincular o histórico da mesa.');
+      if (hasOpenOrder) {
+        toast.error('Não é possível excluir uma mesa com consumo em aberto.');
         return;
       }
 
-      const { error: deleteError } = await supabase
-        .from('mesas')
-        .delete()
-        .eq('id', mesaId);
+      try {
+        const { error: unlinkError } = await supabase
+          .from('pedidos')
+          .update({ mesa_id: null })
+          .eq('mesa_id', mesaId);
 
-      if (deleteError) {
-        console.error('Erro ao excluir mesa:', deleteError);
+        if (unlinkError) {
+          console.error('Erro ao desvincular pedidos da mesa:', unlinkError);
+          toast.error('Não foi possível desvincular o histórico da mesa.');
+          return;
+        }
+
+        const { error: deleteError } = await supabase
+          .from('mesas')
+          .delete()
+          .eq('id', mesaId);
+
+        if (deleteError) {
+          console.error('Erro ao excluir mesa:', deleteError);
+          toast.error('Não foi possível excluir a mesa.');
+          return;
+        }
+
+        await fetchData();
+        toast.success('Mesa excluída!');
+      } catch (error) {
+        console.error('Erro ao excluir mesa:', error);
         toast.error('Não foi possível excluir a mesa.');
-        return;
       }
-
-      await fetchData();
-      toast.success('Mesa excluída!');
-    } catch (error) {
-      console.error('Erro ao excluir mesa:', error);
-      toast.error('Não foi possível excluir a mesa.');
-    }
-  },
-  [fetchData, orders]
-);
+    },
+    [fetchData, orders]
+  );
 
   const getTodayOrders = () =>
     orders.filter((o) => {
@@ -1224,6 +1294,7 @@ const deleteMesa = useCallback(
       const today = new Date().toDateString();
       const isToday = orderDate === today;
       const isNotFinished = o.status !== 'paid';
+
       return isToday || isNotFinished;
     });
 
