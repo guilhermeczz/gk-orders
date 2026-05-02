@@ -310,79 +310,83 @@ export function AppProvider({ children }: { children: ReactNode }) {
     fetchData();
   }, [fetchData]);
 
-  useEffect(() => {
-    let isMounted = true;
-    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+useEffect(() => {
+  let isMounted = true;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const refreshNow = () => {
+  const refreshNow = () => {
+    if (!isMounted) return;
+
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+    }
+
+    refreshTimer = setTimeout(async () => {
       if (!isMounted) return;
 
-      if (refreshTimer) {
-        clearTimeout(refreshTimer);
+      try {
+        await fetchData();
+      } catch (error) {
+        console.error('Erro ao sincronizar dados em tempo real:', error);
       }
+    }, 150);
+  };
 
-      refreshTimer = setTimeout(async () => {
-        if (!isMounted) return;
+  const channelName = `gardens-operacional-realtime-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
 
-        try {
-          await fetchData();
-        } catch (error) {
-          console.error('Erro ao sincronizar dados em tempo real:', error);
-        }
-      }, 150);
-    };
+  const channel = supabase
+    .channel(channelName)
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'pedidos' },
+      () => refreshNow()
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'pedido_itens' },
+      () => refreshNow()
+    )
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'mesas' },
+      () => refreshNow()
+    )
+    .subscribe((status) => {
+      console.log('Realtime Gardens:', status);
 
-    const channel = supabase
-      .channel('gardens-operacional-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'pedidos' },
-        refreshNow
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'pedido_itens' },
-        refreshNow
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'mesas' },
-        refreshNow
-      )
-      .subscribe((status) => {
-        console.log('Realtime Gardens:', status);
-
-        if (status === 'SUBSCRIBED') {
-          refreshNow();
-        }
-      });
-
-    const handleFocus = () => {
-      refreshNow();
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
+      if (status === 'SUBSCRIBED') {
         refreshNow();
       }
-    };
+    });
 
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+  const handleFocus = () => {
+    refreshNow();
+  };
 
-    return () => {
-      isMounted = false;
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      refreshNow();
+    }
+  };
 
-      if (refreshTimer) {
-        clearTimeout(refreshTimer);
-      }
+  window.addEventListener('focus', handleFocus);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
+  return () => {
+    isMounted = false;
 
-      void supabase.removeChannel(channel);
-    };
-  }, [fetchData]);
+    if (refreshTimer) {
+      clearTimeout(refreshTimer);
+    }
+
+    window.removeEventListener('focus', handleFocus);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
+
+    supabase.removeChannel(channel);
+  };
+}, [fetchData]);
 
   const addOrder = useCallback(
     async (
