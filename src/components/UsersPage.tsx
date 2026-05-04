@@ -54,6 +54,13 @@ export function UsersPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const [formErrors, setFormErrors] = useState<{
+  name?: boolean;
+  username?: boolean;
+  password?: boolean;
+  confirmPassword?: boolean;
+}>({});
+
   const [deleteTarget, setDeleteTarget] = useState<null | {
     id: string;
     name: string;
@@ -74,41 +81,58 @@ export function UsersPage() {
     return users.length;
   }, [users]);
 
-  const handleSubmit = async () => {
-    if (!name.trim() || !username.trim() || !password) {
-      toast.error('Preencha todos os campos.');
-      return;
-    }
-
-    if (password.length < 6) {
-      toast.error('A senha deve ter no mínimo 6 caracteres.');
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      toast.error('As senhas não coincidem.');
-      return;
-    }
-
-    setLoading(true);
-
-    const success = await register(name.trim(), username.trim(), password);
-
-    if (success) {
-      setTimeout(async () => {
-        if (fetchUsers) await fetchUsers();
-        toast.success('Operador cadastrado e liberado!');
-        setName('');
-        setUsername('');
-        setPassword('');
-        setConfirmPassword('');
-        setShowForm(false);
-        setLoading(false);
-      }, 1000);
-    } else {
-      setLoading(false);
-    }
+const handleSubmit = async () => {
+  const nextErrors = {
+    name: !name.trim(),
+    username: !username.trim(),
+    password: !password || password.length < 6,
+    confirmPassword: !confirmPassword || password !== confirmPassword,
   };
+
+  setFormErrors(nextErrors);
+
+  if (nextErrors.name) {
+    toast.error('Informe o nome completo do operador.');
+    return;
+  }
+
+  if (nextErrors.username) {
+    toast.error('Informe o nome de usuário.');
+    return;
+  }
+
+  if (nextErrors.password) {
+    toast.error('A senha deve ter no mínimo 6 caracteres.');
+    return;
+  }
+
+  if (nextErrors.confirmPassword) {
+    toast.error('As senhas não coincidem.');
+    return;
+  }
+
+  setLoading(true);
+
+  const success = await register(name.trim(), username.trim(), password);
+
+  if (success) {
+    setTimeout(async () => {
+      if (fetchUsers) await fetchUsers();
+
+      toast.success('Operador cadastrado e liberado!');
+
+      setName('');
+      setUsername('');
+      setPassword('');
+      setConfirmPassword('');
+      setFormErrors({});
+      setShowForm(false);
+      setLoading(false);
+    }, 1000);
+  } else {
+    setLoading(false);
+  }
+};
 
   const requestDelete = (user: { id: string; name: string; username: string }) => {
     if (isProtectedDevUser(user)) {
@@ -125,8 +149,7 @@ export function UsersPage() {
     setDeleting(true);
     try {
       await deleteUser(deleteTarget.id);
-      toast.success(`"${deleteTarget.name}" removido.`);
-      setDeleteTarget(null);
+setDeleteTarget(null);
     } catch (err) {
       console.error(err);
       toast.error('Erro ao remover usuário.');
@@ -137,6 +160,12 @@ export function UsersPage() {
 
   const inputClass =
     'w-full bg-white text-black placeholder:text-gray-400 border border-border rounded-xl px-4 py-3.5 focus:border-primary focus:shadow-[0_0_15px_rgba(255,106,0,0.3)] outline-none transition-all font-medium';
+  const inputErrorClass =
+  'border-red-500 ring-4 ring-red-500/10 focus:border-red-500 focus:shadow-[0_0_15px_rgba(239,68,68,0.25)]';
+
+const inputSuccessClass =
+  'border-green-500/60 focus:border-green-500 focus:shadow-[0_0_15px_rgba(34,197,94,0.2)]';
+
 
 return (
   <>
@@ -168,8 +197,10 @@ return (
 
           {!showForm && (
             <button
-              onClick={() => setShowForm(true)}
-              className="bg-primary text-black font-black px-6 py-3 rounded-xl text-sm shadow-md hover:opacity-90 transition-all flex items-center justify-center gap-2 active:scale-95 hover:-translate-y-0.5 hover:shadow-[0_0_15px_rgba(255,106,0,0.3)]"
+              onClick={() => {
+                setShowForm(true);
+                setFormErrors({});
+              }}              className="bg-primary text-black font-black px-6 py-3 rounded-xl text-sm shadow-md hover:opacity-90 transition-all flex items-center justify-center gap-2 active:scale-95 hover:-translate-y-0.5 hover:shadow-[0_0_15px_rgba(255,106,0,0.3)]"
             >
               <Plus className="w-5 h-5" />
               Adicionar Operador
@@ -225,7 +256,10 @@ return (
               </div>
 
               <button
-                onClick={() => setShowForm(false)}
+                onClick={() => {
+                setShowForm(false);
+                setFormErrors({});
+              }}
                 className="p-2 text-gray-400 hover:text-destructive hover:bg-destructive/20 rounded-lg transition-all"
               >
                 <X className="w-6 h-6" />
@@ -235,20 +269,103 @@ return (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-5">
               <div>
                 <label className="text-sm font-bold text-gray-300 mb-2 block">Nome completo</label>
-                <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ex: João Silva" className={inputClass} />
+                <input
+  value={name}
+  onChange={(e) => {
+    setName(e.target.value);
+
+    if (formErrors.name && e.target.value.trim()) {
+      setFormErrors((prev) => ({ ...prev, name: false }));
+    }
+  }}
+  placeholder="Ex: João Silva"
+  className={`${inputClass} ${
+    formErrors.name ? inputErrorClass : name.trim() ? inputSuccessClass : ''
+  }`}
+/>
+
+{formErrors.name && (
+  <p className="mt-2 text-xs font-bold text-red-500">
+    O nome completo é obrigatório.
+  </p>
+)}
               </div>
               <div>
                 <label className="text-sm font-bold text-gray-300 mb-2 block">Nome de usuário (Login)</label>
-                <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="Ex: joao.silva" className={inputClass} />
-              </div>
+<input
+  value={username}
+  onChange={(e) => {
+    setUsername(e.target.value);
+
+    if (formErrors.username && e.target.value.trim()) {
+      setFormErrors((prev) => ({ ...prev, username: false }));
+    }
+  }}
+  placeholder="Ex: joao.silva"
+  className={`${inputClass} ${
+    formErrors.username ? inputErrorClass : username.trim() ? inputSuccessClass : ''
+  }`}
+/>
+
+{formErrors.username && (
+  <p className="mt-2 text-xs font-bold text-red-500">
+    O nome de usuário é obrigatório.
+  </p>
+)}              </div>
               <div>
                 <label className="text-sm font-bold text-gray-300 mb-2 block">Senha de Acesso</label>
-                <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Mínimo 6 dígitos" className={inputClass} />
-              </div>
+<input
+  value={password}
+  onChange={(e) => {
+    setPassword(e.target.value);
+
+    if (formErrors.password && e.target.value.length >= 6) {
+      setFormErrors((prev) => ({ ...prev, password: false }));
+    }
+
+    if (confirmPassword && e.target.value === confirmPassword) {
+      setFormErrors((prev) => ({ ...prev, confirmPassword: false }));
+    }
+  }}
+  type="password"
+  placeholder="Mínimo 6 caracteres"
+  className={`${inputClass} ${
+    formErrors.password ? inputErrorClass : password.length >= 6 ? inputSuccessClass : ''
+  }`}
+/>
+
+{formErrors.password && (
+  <p className="mt-2 text-xs font-bold text-red-500">
+    A senha precisa ter no mínimo 6 caracteres.
+  </p>
+)}              </div>
               <div>
                 <label className="text-sm font-bold text-gray-300 mb-2 block">Confirmar Senha</label>
-                <input value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} type="password" placeholder="Repita a senha" className={inputClass} />
-              </div>
+<input
+  value={confirmPassword}
+  onChange={(e) => {
+    setConfirmPassword(e.target.value);
+
+    if (formErrors.confirmPassword && password === e.target.value) {
+      setFormErrors((prev) => ({ ...prev, confirmPassword: false }));
+    }
+  }}
+  type="password"
+  placeholder="Repita a senha"
+  className={`${inputClass} ${
+    formErrors.confirmPassword
+      ? inputErrorClass
+      : confirmPassword && password === confirmPassword
+        ? inputSuccessClass
+        : ''
+  }`}
+/>
+
+{formErrors.confirmPassword && (
+  <p className="mt-2 text-xs font-bold text-red-500">
+    As senhas precisam ser iguais.
+  </p>
+)}              </div>
             </div>
 
             <div className="bg-background/40 border border-gray-800 rounded-xl p-4 mb-5">

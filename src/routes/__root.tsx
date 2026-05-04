@@ -2,7 +2,7 @@ import React from "react";
 import { Outlet, Link, createRootRoute } from "@tanstack/react-router";
 import { Toaster } from "sonner";
 import { AppProvider } from "@/lib/store";
-import { AuthProvider } from "@/lib/auth";
+import { AuthProvider, useAuth } from "@/lib/auth";
 
 import "../styles.css";
 
@@ -41,34 +41,41 @@ export const Route = createRootRoute({
 function RootComponent() {
   return (
     <AuthProvider>
-      <AppProvider>
-        <Outlet />
-
-        <Toaster
-          position="top-center"
-          richColors
-          closeButton
-          duration={3000}
-          toastOptions={{
-            classNames: {
-              toast:
-                "rounded-xl border shadow-xl font-medium",
-              title:
-                "font-black",
-              description:
-                "font-medium",
-              success:
-                "bg-green-600 text-white border-green-500",
-              error:
-                "bg-red-600 text-white border-red-500",
-              warning:
-                "bg-yellow-500 text-black border-yellow-400",
-              info:
-                "bg-blue-600 text-white border-blue-500",
-            },
-          }}
-        />
-      </AppProvider>
+      <RootContent />
     </AuthProvider>
+  );
+}
+
+function RootContent() {
+  const { isAuthenticated } = useAuth();
+
+  return (
+    <>
+      {isAuthenticated ? (
+        <AppProvider>
+          <Outlet />
+        </AppProvider>
+      ) : (
+        <Outlet />
+      )}
+
+      <Toaster
+        position="top-center"
+        richColors
+        closeButton
+        duration={3000}
+        toastOptions={{
+          classNames: {
+            toast: "rounded-xl border shadow-xl font-medium",
+            title: "font-black",
+            description: "font-medium",
+            success: "bg-green-600 text-white border-green-500",
+            error: "bg-red-600 text-white border-red-500",
+            warning: "bg-yellow-500 text-black border-yellow-400",
+            info: "bg-blue-600 text-white border-blue-500",
+          },
+        }}
+      />
+    </>
   );
 }

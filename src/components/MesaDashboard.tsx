@@ -1,8 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
   CreditCard,
-  Printer,
-  PlusCircle,
   Search,
   Banknote,
   AlertTriangle,
@@ -22,30 +20,38 @@ import { supabase } from '@/lib/supabase';
 import type { Mesa, Order, OrderBatch, OrderItem } from '@/lib/types';
 import { NewOrderModal } from './NewOrderModal';
 
-type PrintJob = {
-  order: Order;
-  batch?: OrderBatch | null;
-  onlyBatch: boolean;
-};
-
 const removerAcentos = (str: string) => {
-  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return String(str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 };
 
 const processarNota = (notes: string) => {
   if (!notes) return { tipo: '', textoObs: '' };
+
   const regex = /\[(LOCAL|RETIRADA)\]/i;
   const match = notes.match(regex);
   const tipo = match ? match[1].toUpperCase() : '';
   const textoObs = notes.replace(regex, '').trim();
+
   return { tipo, textoObs };
 };
+
+function orderItemsToCart(order: Order) {
+  return (order.items ?? []).reduce<Record<string, number>>((acc, item) => {
+    if (item.productId) {
+      acc[String(item.productId)] =
+        (acc[String(item.productId)] || 0) + Number(item.quantity || 0);
+    }
+
+    return acc;
+  }, {});
+}
 
 export function MesaDashboard() {
   const {
     mesas,
     orders,
     deleteMesa,
+    deleteOrder,
     payOrder,
     payOrdersBulk,
     addMesa,
@@ -60,23 +66,32 @@ export function MesaDashboard() {
   const [addItemsTarget, setAddItemsTarget] = useState<Order | null>(null);
   const [newOrderMesa, setNewOrderMesa] = useState<Mesa | null>(null);
   const [deleteMesaTarget, setDeleteMesaTarget] = useState<Mesa | null>(null);
+
   const [payTarget, setPayTarget] = useState<Order | null>(null);
   const [cashTarget, setCashTarget] = useState<Order | null>(null);
   const [cashReceived, setCashReceived] = useState('');
-  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
+
   const [openSession, setOpenSession] = useState<any | null>(null);
+
   const [newPickupOpen, setNewPickupOpen] = useState(false);
   const [createMesaOpen, setCreateMesaOpen] = useState(false);
   const [createManyOpen, setCreateManyOpen] = useState(false);
+
+  const [editRetiradaTarget, setEditRetiradaTarget] = useState<Order | null>(null);
+  const [deleteRetiradaTarget, setDeleteRetiradaTarget] = useState<Order | null>(null);
+
   const [editingItem, setEditingItem] = useState<{
     item: OrderItem;
     order: Order;
   } | null>(null);
+
   const [deleteItemTarget, setDeleteItemTarget] = useState<{
     order: Order;
     item: OrderItem;
   } | null>(null);
+
   const [editMesaTarget, setEditMesaTarget] = useState<Mesa | null>(null);
+
   const [mesaPaymentTarget, setMesaPaymentTarget] = useState<{
     mesa: Mesa;
     orders: Order[];
@@ -94,42 +109,41 @@ export function MesaDashboard() {
       );
   }, [orders]);
 
-const mesasComResumo = useMemo(() => {
-  return mesas
-    .map((mesa) => {
-      const mesaOrders = orders.filter(
-        (order) =>
-          String(order.mesaId) === String(mesa.id) &&
-          order.status !== 'paid'
-      );
+  const mesasComResumo = useMemo(() => {
+    return mesas
+      .map((mesa) => {
+        const mesaOrders = orders.filter(
+          (order) =>
+            String(order.mesaId) === String(mesa.id) && order.status !== 'paid'
+        );
 
-      const total = mesaOrders.reduce(
-        (sum, order) => sum + Number(order.total || 0),
-        0
-      );
+        const total = mesaOrders.reduce(
+          (sum, order) => sum + Number(order.total || 0),
+          0
+        );
 
-      const totalItens = mesaOrders.reduce(
-        (sum, order) =>
-          sum +
-          (order.items ?? []).reduce(
-            (acc, item) => acc + Number(item.quantity || 0),
-            0
-          ),
-        0
-      );
+        const totalItens = mesaOrders.reduce(
+          (sum, order) =>
+            sum +
+            (order.items ?? []).reduce(
+              (acc, item) => acc + Number(item.quantity || 0),
+              0
+            ),
+          0
+        );
 
-      const isOccupied = mesaOrders.length > 0;
+        const isOccupied = mesaOrders.length > 0;
 
-      return {
-        mesa,
-        orders: mesaOrders,
-        total,
-        totalItens,
-        isOccupied,
-      };
-    })
-    .sort((a, b) => a.mesa.numero - b.mesa.numero);
-}, [mesas, orders]);
+        return {
+          mesa,
+          orders: mesaOrders,
+          total,
+          totalItens,
+          isOccupied,
+        };
+      })
+      .sort((a, b) => a.mesa.numero - b.mesa.numero);
+  }, [mesas, orders]);
 
   const filteredMesas = useMemo(() => {
     const q = removerAcentos(searchTerm.trim().toLowerCase());
@@ -158,43 +172,28 @@ const mesasComResumo = useMemo(() => {
       const number = String(order.number || '');
       const customer = removerAcentos(String(order.customerName || '').toLowerCase());
       const createdBy = removerAcentos(String(order.createdBy || '').toLowerCase());
+
       return number.includes(q) || customer.includes(q) || createdBy.includes(q);
     });
   }, [retiradaOrders, searchTerm]);
 
-const selectedMesaOrders = useMemo(() => {
-  if (!selectedMesa) return [];
+  const selectedMesaOrders = useMemo(() => {
+    if (!selectedMesa) return [];
 
-  return orders
-    .filter(
-      (order) =>
-        String(order.mesaId) === String(selectedMesa.id) &&
-        order.status !== 'paid'
-    )
-    .sort(
-      (a, b) =>
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    );
-}, [orders, selectedMesa]);
+    return orders
+      .filter(
+        (order) =>
+          String(order.mesaId) === String(selectedMesa.id) && order.status !== 'paid'
+      )
+      .sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+  }, [orders, selectedMesa]);
 
   const selectedMesaTotal = useMemo(
     () => selectedMesaOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
     [selectedMesaOrders]
   );
-
-  const itemsToPrint = printJob?.onlyBatch
-    ? printJob.batch?.items ?? []
-    : printJob?.order.items ?? [];
-  const notesToPrint = printJob?.onlyBatch
-    ? printJob?.batch?.notes ?? ''
-    : printJob?.order.notes ?? '';
-  const totalToPrint = itemsToPrint.reduce(
-    (sum, item) => sum + item.quantity * item.unitPrice,
-    0
-  );
-  const printDate = printJob?.onlyBatch
-    ? printJob?.batch?.createdAt
-    : printJob?.order.createdAt;
 
   const normalizeMoneyInput = (value: string) => {
     const cleaned = String(value).replace(/\s/g, '').replace(',', '.');
@@ -210,7 +209,7 @@ const selectedMesaOrders = useMemo(() => {
       return (
         order.status === 'paid' &&
         String(order.paymentMethod || '').toLowerCase() === 'dinheiro' &&
-        order.cashSessionId === openSession.id
+        Number(order.cashSessionId) === Number(openSession.id)
       );
     });
   }, [orders, openSession]);
@@ -251,16 +250,6 @@ const selectedMesaOrders = useMemo(() => {
     !hasInsufficientChange;
 
   React.useEffect(() => {
-    if (printJob) {
-      const timer = setTimeout(() => {
-        window.print();
-        setPrintJob(null);
-      }, 250);
-      return () => clearTimeout(timer);
-    }
-  }, [printJob]);
-
-  React.useEffect(() => {
     const fetchOpenSession = async () => {
       const { data, error } = await supabase
         .from('cash_sessions')
@@ -280,7 +269,7 @@ const selectedMesaOrders = useMemo(() => {
     };
 
     fetchOpenSession();
-  }, [cashTarget, payTarget, mesaPaymentTarget]);
+  }, [cashTarget, payTarget, mesaPaymentTarget, orders]);
 
   const handleOpenMesa = (mesa: Mesa) => {
     setSelectedMesa(mesa);
@@ -391,7 +380,7 @@ const selectedMesaOrders = useMemo(() => {
                   key={mesa.id}
                   type="button"
                   onClick={() => handleOpenMesa(mesa)}
-                 className={`text-left rounded-2xl border p-4 min-h-[165px] transition-all hover:-translate-y-1 hover:shadow-lg overflow-hidden ${
+                  className={`text-left rounded-2xl border p-4 min-h-[165px] transition-all hover:-translate-y-1 hover:shadow-lg overflow-hidden ${
                     isOccupied
                       ? 'border-primary/40 bg-primary/5'
                       : 'border-border bg-background'
@@ -418,13 +407,22 @@ const selectedMesaOrders = useMemo(() => {
 
                   <div className="mt-4 space-y-1.5">
                     <p className="text-xs text-muted-foreground truncate">
-  Garçom: <span className="font-bold text-foreground">{mesa.garcomNome || '-'}</span>
-</p>
-                    <p className="text-xs text-muted-foreground">
-                      Pedidos: <span className="font-bold text-foreground">{mesaOrders.length}</span>
+                      Garçom:{' '}
+                      <span className="font-bold text-foreground">
+                        {mesa.garcomNome || '-'}
+                      </span>
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      Itens: <span className="font-bold text-foreground">{totalItens}</span>
+                      Pedidos:{' '}
+                      <span className="font-bold text-foreground">
+                        {mesaOrders.length}
+                      </span>
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Itens:{' '}
+                      <span className="font-bold text-foreground">
+                        {totalItens}
+                      </span>
                     </p>
                     <p className="text-base font-black text-foreground pt-2">
                       {formatMoney(total)}
@@ -465,10 +463,8 @@ const selectedMesaOrders = useMemo(() => {
               <RetiradaCard
                 key={order.id}
                 order={order}
-                onPrintBatch={(batch: OrderBatch) =>
-                  setPrintJob({ order, batch, onlyBatch: true })
-                }
-                onAddItems={() => setAddItemsTarget(order)}
+                onEdit={() => setEditRetiradaTarget(order)}
+                onDelete={() => setDeleteRetiradaTarget(order)}
                 onFinalize={() => setPayTarget(order)}
               />
             ))}
@@ -506,45 +502,45 @@ const selectedMesaOrders = useMemo(() => {
 
       {selectedMesa && (
         <MesaDetailsModal
-  mesa={selectedMesa}
-  orders={selectedMesaOrders}
-  total={selectedMesaTotal}
-  onClose={() => setSelectedMesa(null)}
-  onAddItemToMesa={() => {
-    const targetOrder = selectedMesaOrders[selectedMesaOrders.length - 1];
+          mesa={selectedMesa}
+          orders={selectedMesaOrders}
+          total={selectedMesaTotal}
+          onClose={() => setSelectedMesa(null)}
+          onAddItemToMesa={() => {
+            const targetOrder = selectedMesaOrders[selectedMesaOrders.length - 1];
 
-    if (!targetOrder) {
-      toast.error('Essa mesa ainda não possui pedido aberto.');
-      return;
-    }
+            if (!targetOrder) {
+              toast.error('Essa mesa ainda não possui pedido aberto.');
+              return;
+            }
 
-    setSelectedMesa(null);
-    setAddItemsTarget(targetOrder);
-  }}
-  onOpenOrder={() => {
-    setSelectedMesa(null);
-    setNewOrderMesa(selectedMesa);
-  }}
-  onEditMesa={() => {
-    setEditMesaTarget(selectedMesa);
-  }}
-  onDeleteMesa={() => {
-    setDeleteMesaTarget(selectedMesa);
-    setSelectedMesa(null);
-  }}
-  onFinalize={handleFinalizeMesa}
-  onEditItem={(order: Order, item: OrderItem) => {
-    setEditingItem({ order, item });
-  }}
-  onDeleteItem={(order: Order, item: OrderItem) => {
-    if (!item.id) {
-      toast.error('Item sem identificador.');
-      return;
-    }
+            setSelectedMesa(null);
+            setAddItemsTarget(targetOrder);
+          }}
+          onOpenOrder={() => {
+            setSelectedMesa(null);
+            setNewOrderMesa(selectedMesa);
+          }}
+          onEditMesa={() => {
+            setEditMesaTarget(selectedMesa);
+          }}
+          onDeleteMesa={() => {
+            setDeleteMesaTarget(selectedMesa);
+            setSelectedMesa(null);
+          }}
+          onFinalize={handleFinalizeMesa}
+          onEditItem={(order: Order, item: OrderItem) => {
+            setEditingItem({ order, item });
+          }}
+          onDeleteItem={(order: Order, item: OrderItem) => {
+            if (!item.id) {
+              toast.error('Item sem identificador.');
+              return;
+            }
 
-    setDeleteItemTarget({ order, item });
-  }}
-/>
+            setDeleteItemTarget({ order, item });
+          }}
+        />
       )}
 
       {newOrderMesa && (
@@ -575,6 +571,72 @@ const selectedMesaOrders = useMemo(() => {
           initialCustomerName={addItemsTarget.customerName}
           appendBaseNotes={addItemsTarget.notes}
         />
+      )}
+
+      {editRetiradaTarget && (
+        <NewOrderModal
+          open={!!editRetiradaTarget}
+          onClose={() => setEditRetiradaTarget(null)}
+          editOrderId={editRetiradaTarget.id}
+          initialCustomerName={editRetiradaTarget.customerName}
+          initialCart={orderItemsToCart(editRetiradaTarget)}
+          initialNotes={editRetiradaTarget.notes}
+          forceOrderType="Retirada"
+          hideOrderTypeSelector
+        />
+      )}
+
+      {deleteRetiradaTarget && (
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/90 p-4 print:hidden">
+          <div className="w-full max-w-sm rounded-3xl border border-gray-800 bg-[#111] p-6 text-white shadow-2xl">
+            <h3 className="text-xl font-black mb-2">Excluir pedido de retirada?</h3>
+
+            <p className="text-sm text-gray-400 mb-6">
+              Tem certeza que deseja excluir o pedido{' '}
+              <span className="font-bold text-white">
+                #{String(deleteRetiradaTarget.number || 0).padStart(4, '0')}
+              </span>{' '}
+              de{' '}
+              <span className="font-bold text-white">
+                {deleteRetiradaTarget.customerName || 'Retirada'}
+              </span>
+              ?
+            </p>
+
+            <div className="rounded-2xl border border-red-500/25 bg-red-500/10 p-4 mb-6">
+              <p className="text-sm text-red-300 font-medium">
+                Essa ação remove o pedido em aberto e seus itens.
+              </p>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setDeleteRetiradaTarget(null)}
+                className="flex-1 rounded-2xl bg-gray-800 py-3 font-bold"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await deleteOrder(deleteRetiradaTarget.id);
+                    toast.success('Pedido de retirada excluído.');
+                    setDeleteRetiradaTarget(null);
+                  } catch (error) {
+                    console.error(error);
+                    toast.error('Erro ao excluir pedido de retirada.');
+                  }
+                }}
+                className="flex-1 rounded-2xl bg-red-600 py-3 font-black text-white"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {deleteItemTarget && (
@@ -639,6 +701,7 @@ const selectedMesaOrders = useMemo(() => {
             <h3 className="text-xl font-bold text-center mb-6">
               Excluir Mesa {deleteMesaTarget.numero}?
             </h3>
+
             <div className="flex gap-3 justify-center">
               <button
                 className="flex-1 py-3 bg-gray-800 hover:bg-gray-700 rounded-xl font-bold transition-all"
@@ -646,6 +709,7 @@ const selectedMesaOrders = useMemo(() => {
               >
                 Cancelar
               </button>
+
               <button
                 className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold transition-all"
                 onClick={async () => {
@@ -867,7 +931,9 @@ const selectedMesaOrders = useMemo(() => {
                 <div className="mt-4 flex items-end justify-between gap-3">
                   <div>
                     <p className="text-sm text-muted-foreground">Total do pedido</p>
-                    <p className="text-3xl font-black text-white">R$ {cashTarget.total.toFixed(2)}</p>
+                    <p className="text-3xl font-black text-white">
+                      R$ {cashTarget.total.toFixed(2)}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -908,7 +974,9 @@ const selectedMesaOrders = useMemo(() => {
               <div className="bg-gray-900 border border-gray-800 rounded-2xl p-4 space-y-3">
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">Total</span>
-                  <span className="font-bold text-white">R$ {cashTarget.total.toFixed(2)}</span>
+                  <span className="font-bold text-white">
+                    R$ {cashTarget.total.toFixed(2)}
+                  </span>
                 </div>
 
                 <div className="flex justify-between items-center text-sm">
@@ -920,7 +988,9 @@ const selectedMesaOrders = useMemo(() => {
 
                 <div className="flex justify-between items-center text-sm">
                   <span className="text-muted-foreground">Disponível para troco</span>
-                  <span className="font-bold text-white">R$ {availableCashForChange.toFixed(2)}</span>
+                  <span className="font-bold text-white">
+                    R$ {availableCashForChange.toFixed(2)}
+                  </span>
                 </div>
 
                 <div className="border-t border-gray-800 pt-3 flex justify-between items-center">
@@ -979,6 +1049,7 @@ const selectedMesaOrders = useMemo(() => {
                           changeGiven: cashChange,
                         }
                       );
+
                       setMesaPaymentTarget(null);
                       setSelectedMesa(null);
                     } else if (cashTarget) {
@@ -999,105 +1070,6 @@ const selectedMesaOrders = useMemo(() => {
                 Confirmar
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {printJob && (
-        <div className="hidden print:block bg-white text-black p-0 m-0 w-[58mm] font-mono">
-          <div style={{ width: '54mm', padding: '2px', color: '#000', background: '#fff', fontSize: '12px' }}>
-            <div style={{ textAlign: 'center', fontWeight: '900', fontSize: '18px' }}>
-              {removerAcentos('GARDENS LANCHES')}
-            </div>
-
-            <div style={{ textAlign: 'center', fontSize: '10px', marginBottom: '5px' }}>
-              {removerAcentos(printJob.onlyBatch ? 'ADICIONAL COZINHA' : 'PRODUCAO COZINHA')}
-            </div>
-
-            <div style={{ borderBottom: '1px dashed #000', margin: '4px 0' }} />
-
-            <div style={{ fontWeight: 'bold', fontSize: '14px' }}>
-              PEDIDO: #{printJob.order.number ? printJob.order.number.toString().padStart(4, '0') : '0000'}
-            </div>
-
-            {printDate && <div>DATA: {format(new Date(printDate), 'HH:mm:ss')}</div>}
-
-            <div style={{ marginBottom: '4px' }}>
-              CLIENTE: {removerAcentos(printJob.order.customerName)}
-            </div>
-
-            {printJob.onlyBatch && <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>ITENS ADICIONADOS</div>}
-
-            <div style={{ borderBottom: '1px dashed #000', margin: '4px 0' }} />
-
-            <div style={{ display: 'flex', flexDirection: 'column', width: '100%', margin: '4px 0' }}>
-              {itemsToPrint.map((item, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'flex-start',
-                    marginBottom: '4px',
-                  }}
-                >
-                  <div
-                    style={{
-                      flex: 1,
-                      paddingRight: '8px',
-                      wordBreak: 'break-word',
-                      lineHeight: '1.2',
-                    }}
-                  >
-                    - <span style={{ fontWeight: 'bold' }}>{item.quantity}un</span> - {removerAcentos(item.productName)}
-                  </div>
-
-                  <div style={{ whiteSpace: 'nowrap', textAlign: 'right', fontWeight: 'bold' }}>
-                    R$ {(item.quantity * item.unitPrice).toFixed(2)}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ borderBottom: '1px dashed #000', margin: '4px 0' }} />
-
-            <div style={{ fontWeight: 'bold', fontSize: '15px', textAlign: 'right', marginTop: '2px' }}>
-              TOTAL: R$ {totalToPrint.toFixed(2)}
-            </div>
-
-            {notesToPrint && (
-              <div style={{ marginTop: '8px' }}>
-                {processarNota(notesToPrint).textoObs && (
-                  <div style={{ marginBottom: '4px' }}>
-                    <span style={{ fontWeight: 'bold' }}>OBS:</span>
-                    <br />
-                    <div style={{ background: '#eee', padding: '3px', border: '1px solid #000', fontSize: '11px' }}>
-                      {removerAcentos(processarNota(notesToPrint).textoObs)}
-                    </div>
-                  </div>
-                )}
-
-                {processarNota(notesToPrint).tipo && (
-                  <div
-                    style={{
-                      textAlign: 'center',
-                      fontWeight: 'black',
-                      fontSize: '14px',
-                      border: '2px solid #000',
-                      padding: '4px',
-                      marginTop: '5px',
-                    }}
-                  >
-                    {processarNota(notesToPrint).tipo}
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '11px', marginTop: '15px' }}>
-              (Gardens)
-            </div>
-            <div style={{ textAlign: 'center', fontSize: '8px', marginTop: '10px' }}>.</div>
           </div>
         </div>
       )}
@@ -1178,6 +1150,7 @@ function CreateMesaModal({
           >
             Cancelar
           </button>
+
           <button
             onClick={() =>
               onSubmit({
@@ -1290,6 +1263,7 @@ function CreateManyMesasModal({
           >
             Cancelar
           </button>
+
           <button
             onClick={() =>
               onSubmit({
@@ -1409,13 +1383,13 @@ function EditMesaModal({
 
 function RetiradaCard({
   order,
-  onPrintBatch,
-  onAddItems,
+  onEdit,
+  onDelete,
   onFinalize,
 }: {
   order: Order;
-  onPrintBatch: (batch: OrderBatch) => void;
-  onAddItems: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
   onFinalize: () => void;
 }) {
   const batches: OrderBatch[] =
@@ -1438,6 +1412,7 @@ function RetiradaCard({
           <p className="text-xs font-bold bg-muted px-2 py-1 rounded-md text-muted-foreground inline-block">
             #{String(order.number || 0).padStart(4, '0')}
           </p>
+
           <p className="font-bold mt-2">{order.customerName || 'Retirada'}</p>
 
           <div className="mt-2 flex flex-wrap gap-2">
@@ -1465,24 +1440,18 @@ function RetiradaCard({
               <p className="text-xs font-black uppercase tracking-wider text-primary">
                 {batch.isAdditional ? `Adição ${index}` : 'Pedido principal'}
               </p>
-
-              {batch.isAdditional && (
-                <button
-                  onClick={() => onPrintBatch(batch)}
-                  className="text-[10px] font-bold border border-border px-2 py-1 rounded-md"
-                >
-                  Adicional
-                </button>
-              )}
             </div>
 
             <div className="space-y-1">
               {batch.items.map((item, idx) => (
                 <div key={`${batch.id}-${idx}`} className="flex justify-between text-sm">
                   <span>
-                    <span className="font-black text-primary mr-1">{item.quantity}x</span>
+                    <span className="font-black text-primary mr-1">
+                      {item.quantity}x
+                    </span>
                     {item.productName}
                   </span>
+
                   <span>{formatMoney(item.quantity * item.unitPrice)}</span>
                 </div>
               ))}
@@ -1491,19 +1460,30 @@ function RetiradaCard({
         ))}
       </div>
 
-      <div className="flex justify-between items-center pt-3 border-t border-border">
+      <div className="flex flex-col gap-3 pt-3 border-t border-border">
         <span className="font-bold">{formatMoney(order.total)}</span>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2 justify-end">
           <button
-            onClick={onAddItems}
-            className="flex items-center gap-2 text-xs font-bold px-3 py-2 bg-primary/10 text-primary rounded-md"
+            type="button"
+            onClick={onEdit}
+            className="flex items-center gap-2 text-xs font-bold px-3 py-2 border border-blue-500/30 bg-blue-500/10 text-blue-400 rounded-md"
           >
-            <PlusCircle className="w-4 h-4" />
-            Adicionar
+            <Pencil className="w-4 h-4" />
+            Editar
           </button>
 
           <button
+            type="button"
+            onClick={onDelete}
+            className="flex items-center gap-2 text-xs font-bold px-3 py-2 border border-red-500/30 bg-red-500/10 text-red-400 rounded-md"
+          >
+            <Trash2 className="w-4 h-4" />
+            Excluir
+          </button>
+
+          <button
+            type="button"
             onClick={onFinalize}
             className="flex items-center gap-2 text-xs font-black px-3 py-2 bg-green-600 text-white rounded-md"
           >
@@ -1636,8 +1616,6 @@ function MesaDetailsModal({
                         </span>
                       </div>
                     </div>
-
-                
                   </div>
 
                   <div className="space-y-3">
@@ -1760,25 +1738,25 @@ function MesaDetailsModal({
                 </>
               )}
 
-             {isOccupied && (
-  <>
-    <button
-      type="button"
-      onClick={onAddItemToMesa}
-      className="rounded-xl bg-primary px-5 py-3 font-black text-primary-foreground"
-    >
-      ADICIONAR ITEM
-    </button>
+              {isOccupied && (
+                <>
+                  <button
+                    type="button"
+                    onClick={onAddItemToMesa}
+                    className="rounded-xl bg-primary px-5 py-3 font-black text-primary-foreground"
+                  >
+                    ADICIONAR ITEM
+                  </button>
 
-    <button
-      type="button"
-      onClick={onFinalize}
-      className="rounded-xl bg-green-600 px-5 py-3 font-black text-white"
-    >
-      Finalizar pagamento
-    </button>
-  </>
-)}
+                  <button
+                    type="button"
+                    onClick={onFinalize}
+                    className="rounded-xl bg-green-600 px-5 py-3 font-black text-white"
+                  >
+                    Finalizar pagamento
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -1883,5 +1861,5 @@ function formatMoney(val: number) {
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',
     currency: 'BRL',
-  }).format(val);
+  }).format(Number(val || 0));
 }

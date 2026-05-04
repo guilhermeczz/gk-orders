@@ -4,7 +4,6 @@ import {
   useState,
   useCallback,
   useEffect,
-  useRef,
   type ReactNode,
 } from 'react';
 
@@ -22,123 +21,35 @@ interface AuthState {
   user: AuthUser | null;
   login: (username: string, password: string) => Promise<boolean>;
   register: (name: string, username: string, password: string) => Promise<boolean>;
-  logout: () => Promise<void>;
+  logout: () => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
-function normalizeUsername(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function buildAuthEmail(usernameOrEmail: string) {
-  const cleanValue = normalizeUsername(usernameOrEmail);
-
-  if (cleanValue.includes('@')) {
-    return cleanValue;
-  }
-
-  return `${cleanValue}@gardens.com`;
-}
-
-function getUsernameFromEmail(email?: string | null) {
-  if (!email) return '';
-  return email.split('@')[0] || '';
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
-  const userRef = useRef<AuthUser | null>(null);
+
+  const formatUser = (supabaseUser: any): AuthUser => ({
+    id: supabaseUser.id,
+    name: supabaseUser.user_metadata?.full_name || 'Operador',
+    username:
+      supabaseUser.user_metadata?.username ||
+      supabaseUser.email?.split('@')[0] ||
+      '',
+  });
 
   useEffect(() => {
-    userRef.current = user;
-  }, [user]);
-
-  const getValidSystemUser = useCallback(async (supabaseUser: any): Promise<AuthUser | null> => {
-    if (!supabaseUser?.id) return null;
-
-    const { data: dbUser, error } = await supabase
-      .from('usuarios')
-      .select('id, nome, username')
-      .eq('id', supabaseUser.id)
-      .maybeSingle();
-
-    if (error) {
-      console.error('Erro ao validar usuário na tabela usuarios:', error);
-      return null;
-    }
-
-    if (!dbUser) {
-      return null;
-    }
-
-    return {
-      id: String(dbUser.id),
-      name: dbUser.nome || supabaseUser.user_metadata?.full_name || 'Operador',
-      username:
-        dbUser.username ||
-        supabaseUser.user_metadata?.username ||
-        getUsernameFromEmail(supabaseUser.email),
-    };
-  }, []);
-
-  const logout = useCallback(async () => {
-    await supabase.auth.signOut();
-    setUser(null);
-    toast.info('Sessão encerrada.');
-  }, []);
-
-  const validateCurrentSession = useCallback(
-    async (showMessage = false) => {
+    const initializeAuth = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
 
-      if (!session?.user) {
-        setUser(null);
-        return false;
+      if (session?.user) {
+        setUser(formatUser(session.user));
       }
 
-      const validUser = await getValidSystemUser(session.user);
-
-      if (!validUser) {
-        await supabase.auth.signOut();
-        setUser(null);
-
-        if (showMessage) {
-          toast.error('Seu usuário foi removido ou perdeu permissão de acesso.');
-        }
-
-        return false;
-      }
-
-      setUser(validUser);
-      return true;
-    },
-    [getValidSystemUser]
-  );
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const initializeAuth = async () => {
-      try {
-        const valid = await validateCurrentSession(false);
-
-        if (!isMounted) return;
-
-        if (!valid) {
-          setUser(null);
-        }
-      } catch (err) {
-        console.error('Erro ao inicializar autenticação:', err);
-        setUser(null);
-      } finally {
-        if (isMounted) {
-          setIsInitializing(false);
-        }
-      }
+      setIsInitializing(false);
     };
 
     initializeAuth();
@@ -146,100 +57,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      const validateSession = async () => {
-        if (!session?.user) {
-          setUser(null);
-          return;
-        }
-
-        const validUser = await getValidSystemUser(session.user);
-
-        if (!validUser) {
-          await supabase.auth.signOut();
-          setUser(null);
-          toast.error('Usuário removido ou sem permissão de acesso.');
-          return;
-        }
-
-        setUser(validUser);
-      };
-
-      validateSession();
+      if (session?.user) {
+        setUser(formatUser(session.user));
+      } else {
+        setUser(null);
+      }
     });
 
-    return () => {
-      isMounted = false;
-      subscription.unsubscribe();
-    };
-  }, [getValidSystemUser, validateCurrentSession]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (userRef.current) {
-        validateCurrentSession(true);
-      }
-    }, 5000);
-
-    const handleFocus = () => {
-      if (userRef.current) {
-        validateCurrentSession(true);
-      }
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && userRef.current) {
-        validateCurrentSession(true);
-      }
-    };
-
-    window.addEventListener('focus', handleFocus);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      window.clearInterval(interval);
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [validateCurrentSession]);
+    return () => subscription.unsubscribe();
+  }, []);
 
   const login = useCallback(
     async (username: string, password: string): Promise<boolean> => {
       try {
-        const cleanUsername = normalizeUsername(username);
+        const cleanUsername = username.toLowerCase().trim();
 
-        if (!cleanUsername) {
-          toast.error('Informe o usuário ou e-mail.');
+        if (!cleanUsername || !password) {
+          toast.error('Informe usuário e senha.');
           return false;
         }
 
-        if (!password) {
-          toast.error('Informe a senha.');
-          return false;
-        }
-
-        const email = buildAuthEmail(cleanUsername);
+        const email = `${cleanUsername}@gardens.com`;
 
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
 
-        if (error || !data.user) {
+        if (error) {
           toast.error('Usuário ou senha inválidos.');
           return false;
         }
 
-        const validUser = await getValidSystemUser(data.user);
-
-        if (!validUser) {
-          await supabase.auth.signOut();
-          setUser(null);
-          toast.error('Usuário removido ou sem permissão de acesso.');
-          return false;
+        if (data.user) {
+          setUser(formatUser(data.user));
+          toast.success(
+            `Bem-vindo, ${data.user.user_metadata?.full_name || cleanUsername}!`
+          );
         }
-
-        setUser(validUser);
-        toast.success(`Bem-vindo, ${validUser.name}!`);
 
         return true;
       } catch (err) {
@@ -248,31 +103,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [getValidSystemUser]
+    []
   );
 
   const register = useCallback(
-    async (name: string, username: string, password: string): Promise<boolean> => {
+    async (
+      name: string,
+      username: string,
+      password: string
+    ): Promise<boolean> => {
       try {
         const cleanName = name.trim();
-        const cleanUsername = normalizeUsername(username);
+        const cleanUsername = username.toLowerCase().trim();
 
-        if (!cleanName) {
-          toast.error('Informe o nome do usuário.');
+        if (!cleanName || !cleanUsername || !password) {
+          toast.error('Preencha todos os campos.');
           return false;
         }
 
-        if (!cleanUsername) {
-          toast.error('Informe o usuário.');
+        if (password.length < 6) {
+          toast.error('A senha precisa ter no mínimo 6 caracteres.');
           return false;
         }
 
-        if (!password || password.length < 6) {
-          toast.error('A senha precisa ter no mínimo 6 dígitos.');
-          return false;
-        }
+        /**
+         * IMPORTANTE:
+         * Guardamos a sessão atual antes de criar o novo operador.
+         * O Supabase Auth pode trocar a sessão para o usuário recém-criado.
+         * Depois do cadastro, restauramos a sessão anterior.
+         */
+        const {
+          data: { session: previousSession },
+        } = await supabase.auth.getSession();
 
-        const email = buildAuthEmail(cleanUsername);
+        const previousUser = previousSession?.user ?? null;
+
+        const email = `${cleanUsername}@gardens.com`;
 
         const { data, error } = await supabase.auth.signUp({
           email,
@@ -280,50 +146,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           options: {
             data: {
               full_name: cleanName,
-              username: cleanUsername.includes('@')
-                ? getUsernameFromEmail(cleanUsername)
-                : cleanUsername,
+              username: cleanUsername,
             },
           },
         });
 
         if (error) {
-          const message = error.message.toLowerCase();
-
           if (
-            message.includes('already registered') ||
-            message.includes('user already registered') ||
-            message.includes('already exists')
+            error.message.toLowerCase().includes('already registered') ||
+            error.message.toLowerCase().includes('already exists') ||
+            error.message.toLowerCase().includes('user already registered')
           ) {
-            toast.error('Este usuário já está em uso.');
+            toast.error('Este nome de usuário já está em uso.');
+          } else if (error.message.toLowerCase().includes('password')) {
+            toast.error('Erro: A senha precisa ter no mínimo 6 caracteres.');
           } else {
-            toast.error('Erro ao criar usuário. Verifique os dados informados.');
+            toast.error('Erro ao criar operador.');
           }
 
           return false;
         }
 
         if (!data.user) {
-          toast.error('Não foi possível criar o usuário.');
+          toast.error('Não foi possível criar o operador.');
           return false;
         }
-
-        const usernameToSave = cleanUsername.includes('@')
-          ? getUsernameFromEmail(cleanUsername)
-          : cleanUsername;
 
         const { error: dbError } = await supabase.from('usuarios').upsert([
           {
             id: data.user.id,
             nome: cleanName,
-            username: usernameToSave,
+            username: cleanUsername,
           },
         ]);
 
         if (dbError) {
           console.error('Erro ao inserir usuário na tabela usuarios:', dbError);
-          toast.error('Usuário criado no Auth, mas houve erro ao salvar no sistema.');
+          toast.error('Operador criado no Auth, mas não foi salvo na tabela de usuários.');
           return false;
+        }
+
+        /**
+         * Restaura a sessão anterior caso o Supabase tenha logado no usuário novo.
+         */
+        const {
+          data: { session: currentSession },
+        } = await supabase.auth.getSession();
+
+        const currentUserId = currentSession?.user?.id ?? null;
+        const previousUserId = previousUser?.id ?? null;
+
+        if (
+          previousSession?.access_token &&
+          previousSession?.refresh_token &&
+          previousUserId &&
+          currentUserId &&
+          currentUserId !== previousUserId
+        ) {
+          const { error: restoreError } = await supabase.auth.setSession({
+            access_token: previousSession.access_token,
+            refresh_token: previousSession.refresh_token,
+          });
+
+          if (restoreError) {
+            console.error('Erro ao restaurar sessão anterior:', restoreError);
+            toast.warning(
+              'Operador criado, mas foi necessário refazer o login do administrador.'
+            );
+            setUser(null);
+            return true;
+          }
+
+          setUser(formatUser(previousUser));
         }
 
         toast.success('Conta criada com sucesso!');
@@ -336,6 +230,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     },
     []
   );
+
+  const logout = useCallback(async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    toast.info('Sessão encerrada.');
+  }, []);
 
   if (isInitializing) {
     return (
@@ -365,10 +265,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext);
-
-  if (!ctx) {
-    throw new Error('useAuth deve ser usado dentro do AuthProvider');
-  }
-
+  if (!ctx) throw new Error('useAuth deve ser usado dentro do AuthProvider');
   return ctx;
 }

@@ -53,6 +53,11 @@ export function ProductsPage() {
 
   const [loadingProd, setLoadingProd] = useState(false);
 
+const [prodErrors, setProdErrors] = useState<{
+  name?: boolean;
+  price?: boolean;
+  categoryId?: boolean;
+}>({});
  
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -68,7 +73,9 @@ export function ProductsPage() {
   const [editCatId, setEditCatId] = useState<string | null>(null);
 
   const [loadingCat, setLoadingCat] = useState(false);
-
+const [catErrors, setCatErrors] = useState<{
+  name?: boolean;
+}>({});
 
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -157,45 +164,63 @@ export function ProductsPage() {
 
 
 
-  const handleSubmitProduct = async () => {
+const handleSubmitProduct = async () => {
+  const nextErrors = {
+    name: !name.trim(),
+    price: !price || Number(price) <= 0,
+    categoryId: !categoryId,
+  };
 
-    if (!name.trim()) return toast.error('Informe o nome do produto.');
+  setProdErrors(nextErrors);
 
-    if (!price || parseFloat(price) <= 0) return toast.error('Informe um preço válido.');
+  if (nextErrors.name) {
+    toast.error('Informe o nome do produto.');
+    return;
+  }
 
-    if (!categoryId) return toast.error('Selecione uma categoria.');
+  if (nextErrors.price) {
+    toast.error('Informe um preço válido.');
+    return;
+  }
 
+  if (nextErrors.categoryId) {
+    toast.error('Selecione uma categoria.');
+    return;
+  }
 
+  setLoadingProd(true);
 
-    setLoadingProd(true);
+  try {
+    if (editProdId) {
+      await updateProduct({
+        id: editProdId,
+        name: name.trim(),
+        price: Number(price),
+        categoryId,
+      });
 
-    try {
+      toast.success('Produto atualizado!');
+    } else {
+      await addProduct({
+        name: name.trim(),
+        price: Number(price),
+        categoryId,
+      });
 
-      if (editProdId) {
-
-        await updateProduct({ id: editProdId, name: name.trim(), price: parseFloat(price), categoryId });
-
-        toast.success("Produto atualizado!");
-
-      } else {
-
-        await addProduct({ name: name.trim(), price: parseFloat(price), categoryId });
-
-        toast.success("Produto adicionado!");
-
-      }
-
-      setName(''); setPrice(''); setEditProdId(null); setShowProdForm(false);
-
-    } catch (error) {
-
-      toast.error("Erro ao processar produto.");
-
-    } finally {
-
-      setLoadingProd(false);
-
+      toast.success('Produto adicionado!');
     }
+
+    setName('');
+    setPrice('');
+    setEditProdId(null);
+    setShowProdForm(false);
+    setProdErrors({});
+  } catch (error) {
+    console.error(error);
+    toast.error('Erro ao processar produto.');
+  } finally {
+    setLoadingProd(false);
+  }
 
   };
 
@@ -218,50 +243,59 @@ export function ProductsPage() {
 
 
   const cancelEditProduct = () => {
+  setName('');
+  setPrice('');
+  setEditProdId(null);
+  setShowProdForm(false);
+  setProdErrors({});
+};
 
-    setName(''); setPrice(''); setEditProdId(null); setShowProdForm(false);
 
+
+const handleSubmitCategory = async () => {
+  const nextErrors = {
+    name: !catName.trim(),
   };
 
+  setCatErrors(nextErrors);
 
+  if (nextErrors.name) {
+    toast.error('Informe o nome da categoria.');
+    return;
+  }
 
-  const handleSubmitCategory = async () => {
+  setLoadingCat(true);
 
-    if (!catName.trim()) return toast.error('Informe o nome da categoria.');
+  try {
+    if (editCatId) {
+      await updateCategory({
+        id: editCatId,
+        name: catName.trim(),
+        emoji: catEmoji,
+      });
 
-   
+      toast.success('Categoria atualizada!');
+    } else {
+      await addCategory({
+        name: catName.trim(),
+        emoji: catEmoji,
+      });
 
-    setLoadingCat(true);
-
-    try {
-
-      if (editCatId) {
-
-        await updateCategory({ id: editCatId, name: catName.trim(), emoji: catEmoji });
-
-        toast.success("Categoria atualizada!");
-
-      } else {
-
-        await addCategory({ name: catName.trim(), emoji: catEmoji });
-
-        toast.success("Categoria adicionada!");
-
-      }
-
-      setCatName(''); setCatEmoji('📦'); setEditCatId(null); setShowCatForm(false);
-
-    } catch (error) {
-
-      toast.error("Erro ao processar categoria.");
-
-    } finally {
-
-      setLoadingCat(false);
-
+      toast.success('Categoria adicionada!');
     }
 
-  };
+    setCatName('');
+    setCatEmoji('📦');
+    setEditCatId(null);
+    setShowCatForm(false);
+    setCatErrors({});
+  } catch (error) {
+    console.error(error);
+    toast.error('Erro ao processar categoria.');
+  } finally {
+    setLoadingCat(false);
+  }
+};
 
 
 
@@ -280,10 +314,12 @@ export function ProductsPage() {
 
 
   const cancelEditCategory = () => {
-
-    setCatName(''); setCatEmoji('📦'); setEditCatId(null); setShowCatForm(false);
-
-  };
+  setCatName('');
+  setCatEmoji('📦');
+  setEditCatId(null);
+  setShowCatForm(false);
+  setCatErrors({});
+};
 
 
 
@@ -314,7 +350,11 @@ export function ProductsPage() {
 
 
   const inputClass = "w-full px-4 py-3.5 rounded-xl bg-white text-black border border-border placeholder:text-gray-400 focus:outline-none focus:border-primary focus:shadow-[0_0_15px_rgba(255,106,0,0.2)] transition-all font-medium";
+  const inputErrorClass =
+  'border-red-500 ring-4 ring-red-500/10 focus:border-red-500 focus:shadow-[0_0_15px_rgba(239,68,68,0.25)]';
 
+const inputSuccessClass =
+  'border-green-500/60 focus:border-green-500 focus:shadow-[0_0_15px_rgba(34,197,94,0.2)]';
 
 
  return (
@@ -582,16 +622,56 @@ export function ProductsPage() {
 
                     <label className="text-sm font-bold text-gray-300 mb-2 block">Nome do Lanche</label>
 
-                    <input value={name} onChange={e => setName(e.target.value)} placeholder="Ex: X-Salada" className={inputClass} />
+                      <input
+                        value={name}
+                        onChange={(e) => {
+                          setName(e.target.value);
 
+                          if (prodErrors.name && e.target.value.trim()) {
+                            setProdErrors((prev) => ({ ...prev, name: false }));
+                          }
+                        }}
+                        placeholder="Ex: X-Salada"
+                        className={`${inputClass} ${
+                          prodErrors.name ? inputErrorClass : name.trim() ? inputSuccessClass : ''
+                        }`}
+                      />
+
+                      {prodErrors.name && (
+                        <p className="mt-2 text-xs font-bold text-red-500">
+                          O nome do produto é obrigatório.
+                        </p>
+                      )}
                   </div>
 
                   <div>
 
                     <label className="text-sm font-bold text-gray-300 mb-2 block">Preço (R$)</label>
 
-                    <input value={price} onChange={e => setPrice(e.target.value)} type="number" inputMode="decimal" placeholder="0.00" className={inputClass} />
+<input
+  value={price}
+  onChange={(e) => {
+    setPrice(e.target.value);
 
+    if (prodErrors.price && Number(e.target.value) > 0) {
+      setProdErrors((prev) => ({ ...prev, price: false }));
+    }
+  }}
+  type="number"
+  inputMode="decimal"
+  min="0"
+  step="0.01"
+  placeholder="0.00"
+  className={`${inputClass} ${
+    prodErrors.price ? inputErrorClass : Number(price) > 0 ? inputSuccessClass : ''
+  }`}
+/>
+
+{prodErrors.price && (
+  <p className="mt-2 text-xs font-bold text-red-500">
+    Informe um preço maior que zero.
+  </p>
+)}
                   </div>
 
                 </div>
@@ -602,7 +682,24 @@ export function ProductsPage() {
 
                   <label className="text-sm font-bold text-gray-300 mb-2 block">Categoria</label>
 
-                  <select value={categoryId} onChange={e => setCategoryId(e.target.value)} className={inputClass}>
+                  <select
+  value={categoryId}
+  onChange={(e) => {
+    setCategoryId(e.target.value);
+
+    if (prodErrors.categoryId && e.target.value) {
+      setProdErrors((prev) => ({ ...prev, categoryId: false }));
+    }
+  }}
+  className={`${inputClass} ${
+    prodErrors.categoryId ? inputErrorClass : categoryId ? inputSuccessClass : ''
+  }`}
+>
+  {prodErrors.categoryId && (
+  <p className="mt-2 text-xs font-bold text-red-500">
+    Selecione uma categoria para o produto.
+  </p>
+)}
 
                     <option value="" disabled>Selecione uma categoria...</option>
 
@@ -746,8 +843,26 @@ export function ProductsPage() {
 
                     <label className="text-sm font-bold text-gray-300 mb-2 block">Nome da Categoria</label>
 
-                    <input value={catName} onChange={e => setCatName(e.target.value)} placeholder="Ex: Bebidas" className={inputClass} />
+<input
+  value={catName}
+  onChange={(e) => {
+    setCatName(e.target.value);
 
+    if (catErrors.name && e.target.value.trim()) {
+      setCatErrors((prev) => ({ ...prev, name: false }));
+    }
+  }}
+  placeholder="Ex: Bebidas"
+  className={`${inputClass} ${
+    catErrors.name ? inputErrorClass : catName.trim() ? inputSuccessClass : ''
+  }`}
+/>
+
+{catErrors.name && (
+  <p className="mt-2 text-xs font-bold text-red-500">
+    O nome da categoria é obrigatório.
+  </p>
+)}
                   </div>
 
                 </div>

@@ -770,6 +770,10 @@ useEffect(() => {
         if (openSession?.id) {
           cashSessionId = openSession.id;
         }
+        if (!cashSessionId) {
+  toast.error('O caiixa esta fechado, ERRO.');
+  throw new Error('Nenhum caixa aberto.');
+}
 
         const updatePayload: any = {
           status: 'paid',
@@ -823,7 +827,7 @@ useEffect(() => {
         toast.success('Pagamento confirmado!');
       } catch (error) {
         console.error('Erro ao pagar pedido:', error);
-        toast.error('Não foi possível finalizar o pagamento.');
+        toast.error('Não foi possível finalizar o pagamento, Abra o caixa.');
         throw error;
       }
     },
@@ -859,6 +863,10 @@ useEffect(() => {
         if (openSession?.id) {
           cashSessionId = openSession.id;
         }
+        if (!cashSessionId) {
+  toast.error('O caixa esta fechado, ERRO.');
+  throw new Error('Nenhum caixa aberto.');
+}
 
         const updatePayload: any = {
           status: 'paid',
@@ -918,7 +926,7 @@ useEffect(() => {
         toast.success('Pagamento da mesa finalizado!');
       } catch (error) {
         console.error('Erro ao pagar pedidos em lote:', error);
-        toast.error('Não foi possível finalizar os pedidos da mesa.');
+        toast.error('Não foi possível finalizar os pedidos da mesa, CAIXA FECHADO.');
         throw error;
       }
     },
@@ -1077,16 +1085,45 @@ const deleteUser = useCallback(
       return;
     }
 
-    const { error } = await supabase.from('usuarios').delete().eq('id', id);
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    const loggedUserId = session?.user?.id ? String(session.user.id) : null;
+    const isDeletingLoggedUser = loggedUserId === String(id);
+
+    const { data, error } = await supabase.functions.invoke('delete-operator', {
+      body: {
+        userId: id,
+      },
+    });
 
     if (error) {
-      console.error('Erro ao excluir usuário:', error);
-      toast.error('Erro ao excluir usuário.');
+      console.error('Erro ao chamar função delete-operator:', error);
+      toast.error('Não foi possível excluir o operador.');
+      return;
+    }
+
+    if (data?.error) {
+      toast.error(data.error);
       return;
     }
 
     await fetchUsers();
-    toast.success('Usuário removido do sistema.');
+
+    if (isDeletingLoggedUser || data?.deletedCurrentUser) {
+      toast.warning('Seu acesso foi removido. Você será desconectado.');
+
+      await supabase.auth.signOut();
+
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 800);
+
+      return;
+    }
+
+    toast.success('Operador removido com sucesso.');
   },
   [fetchUsers, users]
 );
