@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAppStore } from '@/lib/store';
 import { useAuth } from '@/lib/auth';
 import { toast } from 'sonner';
+import { AppHeader } from '@/components/AppHeader';
 import {
   Plus,
   Trash2,
@@ -137,8 +138,13 @@ export function UsersPage() {
   const inputClass =
     'w-full bg-white text-black placeholder:text-gray-400 border border-border rounded-xl px-4 py-3.5 focus:border-primary focus:shadow-[0_0_15px_rgba(255,106,0,0.3)] outline-none transition-all font-medium';
 
-  return (
-    <div className="min-h-screen bg-background pt-8 pb-20">
+return (
+  <>
+    <div className="print:hidden">
+      <AppHeader />
+    </div>
+
+    <div className="min-h-screen bg-background pt-24 pb-20">
       <div className="max-w-5xl mx-auto px-6 animate-fade-in">
         <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 mb-8 border-b border-border pb-4">
           <div className="flex items-center gap-4">
@@ -451,7 +457,8 @@ export function UsersPage() {
             </div>
           </div>
         </div>
-      )}
+        )}
     </div>
-  );
+  </>
+);
 }

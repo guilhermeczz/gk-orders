@@ -58,8 +58,8 @@ export interface User {
   id: string;
   name: string;
   username: string;
+  active?: boolean;
 }
-
 export interface Mesa {
   id: string;
   numero: number;

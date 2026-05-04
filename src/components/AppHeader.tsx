@@ -8,6 +8,7 @@ import {
   BarChart3,
   LogOut,
   Wallet,
+  CheckCircle2,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useAuth } from '@/lib/auth';
@@ -15,14 +16,15 @@ import { toast } from 'sonner';
 import logoFull from '@/assets/logo-full.png';
 
 const navItems = [
-  { to: '/dashboard' as const, label: 'Início (Mesas & Pagos)', icon: Home },
+  { to: '/dashboard' as const, label: 'Início (Mesas & Retiradas)', icon: Home },
+  { to: '/paid-orders' as const, label: 'Pedidos Pagos', icon: CheckCircle2 },
   { to: '/products' as const, label: 'Produtos', icon: Package },
   { to: '/users' as const, label: 'Usuários', icon: Users },
   { to: '/reports' as const, label: 'Relatórios & Arquivados', icon: BarChart3 },
   { to: '/cash-register' as const, label: 'Controle de Caixa', icon: Wallet },
 ];
 
-export function AppHeader({ onNewOrder }: { onNewOrder: () => void }) {
+export function AppHeader({ onNewOrder }: { onNewOrder?: () => void }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -61,15 +63,17 @@ export function AppHeader({ onNewOrder }: { onNewOrder: () => void }) {
           <div className="w-10" />
         </div>
 
-        <div className="px-4 pb-3">
-          <button
-            onClick={onNewOrder}
-            type="button"
-            className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-bold hover:opacity-90 transition-all shadow-lg hover:shadow-[0_0_15px_rgba(255,106,0,0.4)] hover:-translate-y-0.5 active:scale-95"
-          >
-            + Abrir pedido em mesa
-          </button>
-        </div>
+        {onNewOrder && (
+  <div className="px-4 pb-3">
+    <button
+      onClick={onNewOrder}
+      type="button"
+      className="w-full py-3 rounded-lg bg-primary text-primary-foreground font-bold hover:opacity-90 transition-all shadow-lg hover:shadow-[0_0_15px_rgba(255,106,0,0.4)] hover:-translate-y-0.5 active:scale-95"
+    >
+      + Abrir pedido em mesa
+    </button>
+  </div>
+)}
       </header>
 
       {drawerOpen && (

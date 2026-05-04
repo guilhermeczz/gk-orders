@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as UsersRouteImport } from './routes/users'
 import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as ProductsRouteImport } from './routes/products'
+import { Route as PaidOrdersRouteImport } from './routes/paid-orders'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CashRegisterRouteImport } from './routes/cash-register'
 import { Route as IndexRouteImport } from './routes/index'
@@ -29,6 +30,11 @@ const ReportsRoute = ReportsRouteImport.update({
 const ProductsRoute = ProductsRouteImport.update({
   id: '/products',
   path: '/products',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PaidOrdersRoute = PaidOrdersRouteImport.update({
+  id: '/paid-orders',
+  path: '/paid-orders',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -51,6 +57,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cash-register': typeof CashRegisterRoute
   '/dashboard': typeof DashboardRoute
+  '/paid-orders': typeof PaidOrdersRoute
   '/products': typeof ProductsRoute
   '/reports': typeof ReportsRoute
   '/users': typeof UsersRoute
@@ -59,6 +66,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cash-register': typeof CashRegisterRoute
   '/dashboard': typeof DashboardRoute
+  '/paid-orders': typeof PaidOrdersRoute
   '/products': typeof ProductsRoute
   '/reports': typeof ReportsRoute
   '/users': typeof UsersRoute
@@ -68,6 +76,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/cash-register': typeof CashRegisterRoute
   '/dashboard': typeof DashboardRoute
+  '/paid-orders': typeof PaidOrdersRoute
   '/products': typeof ProductsRoute
   '/reports': typeof ReportsRoute
   '/users': typeof UsersRoute
@@ -78,6 +87,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cash-register'
     | '/dashboard'
+    | '/paid-orders'
     | '/products'
     | '/reports'
     | '/users'
@@ -86,6 +96,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cash-register'
     | '/dashboard'
+    | '/paid-orders'
     | '/products'
     | '/reports'
     | '/users'
@@ -94,6 +105,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cash-register'
     | '/dashboard'
+    | '/paid-orders'
     | '/products'
     | '/reports'
     | '/users'
@@ -103,6 +115,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CashRegisterRoute: typeof CashRegisterRoute
   DashboardRoute: typeof DashboardRoute
+  PaidOrdersRoute: typeof PaidOrdersRoute
   ProductsRoute: typeof ProductsRoute
   ReportsRoute: typeof ReportsRoute
   UsersRoute: typeof UsersRoute
@@ -129,6 +142,13 @@ declare module '@tanstack/react-router' {
       path: '/products'
       fullPath: '/products'
       preLoaderRoute: typeof ProductsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/paid-orders': {
+      id: '/paid-orders'
+      path: '/paid-orders'
+      fullPath: '/paid-orders'
+      preLoaderRoute: typeof PaidOrdersRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -159,6 +179,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CashRegisterRoute: CashRegisterRoute,
   DashboardRoute: DashboardRoute,
+  PaidOrdersRoute: PaidOrdersRoute,
   ProductsRoute: ProductsRoute,
   ReportsRoute: ReportsRoute,
   UsersRoute: UsersRoute,

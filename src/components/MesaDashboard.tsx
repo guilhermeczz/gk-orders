@@ -83,11 +83,6 @@ export function MesaDashboard() {
     total: number;
   } | null>(null);
 
-  const paidOrders = useMemo(
-    () => orders.filter((order) => order.status === 'paid'),
-    [orders]
-  );
-
   const retiradaOrders = useMemo(() => {
     return orders
       .filter((order) => {
@@ -396,7 +391,7 @@ const selectedMesaOrders = useMemo(() => {
                   key={mesa.id}
                   type="button"
                   onClick={() => handleOpenMesa(mesa)}
-                  className={`text-left rounded-2xl border p-4 min-h-[165px] transition-all hover:-translate-y-1 hover:shadow-lg ${
+                 className={`text-left rounded-2xl border p-4 min-h-[165px] transition-all hover:-translate-y-1 hover:shadow-lg overflow-hidden ${
                     isOccupied
                       ? 'border-primary/40 bg-primary/5'
                       : 'border-border bg-background'
@@ -422,9 +417,9 @@ const selectedMesaOrders = useMemo(() => {
                   </div>
 
                   <div className="mt-4 space-y-1.5">
-                    <p className="text-xs text-muted-foreground">
-                      Garçom: <span className="font-bold text-foreground">{mesa.garcomNome || '-'}</span>
-                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+  Garçom: <span className="font-bold text-foreground">{mesa.garcomNome || '-'}</span>
+</p>
                     <p className="text-xs text-muted-foreground">
                       Pedidos: <span className="font-bold text-foreground">{mesaOrders.length}</span>
                     </p>
@@ -470,7 +465,6 @@ const selectedMesaOrders = useMemo(() => {
               <RetiradaCard
                 key={order.id}
                 order={order}
-                onPrintOrder={() => setPrintJob({ order, onlyBatch: false })}
                 onPrintBatch={(batch: OrderBatch) =>
                   setPrintJob({ order, batch, onlyBatch: true })
                 }
@@ -481,59 +475,6 @@ const selectedMesaOrders = useMemo(() => {
           </div>
         </section>
       </div>
-
-      <section className="bg-card border border-border rounded-2xl p-4 shadow-sm print:hidden mt-4">
-        <div className="mb-4 flex items-center justify-between border-b border-border pb-3">
-          <h3 className="font-black uppercase tracking-wider text-sm text-gray-400">
-            Pagos
-          </h3>
-          <span className="text-xs font-bold bg-muted px-2 py-1 rounded-md text-muted-foreground">
-            {paidOrders.length}
-          </span>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          {paidOrders.length === 0 && (
-            <p className="col-span-full text-xs text-muted-foreground text-center mt-2 italic">
-              Sem pedidos pagos
-            </p>
-          )}
-
-          {paidOrders.map((order) => (
-  <div
-    key={order.id}
-    className="bg-background border border-border rounded-xl p-3"
-  >
-    <div className="flex justify-between items-start gap-3">
-  <div>
-    <p className="text-xs font-bold bg-muted px-2 py-1 rounded-md text-muted-foreground inline-block">
-      #{String(order.number || 0).padStart(4, '0')}
-    </p>
-    <p className="font-bold mt-2">{order.customerName}</p>
-    <p className="text-xs text-muted-foreground mt-1">
-      {order.mesaId ? 'Mesa vinculada' : 'Pedido avulso'}
-    </p>
-  </div>
-
-  <span className="text-[10px] font-black px-2 py-1 rounded-full uppercase tracking-wider bg-green-500/15 text-green-400 border border-green-500/30">
-    Pago
-  </span>
-</div>
-
-    <div className="mt-3 pt-3 border-t border-border flex items-center justify-between">
-      <span className="text-sm font-bold">
-        {formatMoney(order.total)}
-      </span>
-      <span className="text-xs text-muted-foreground">
-        {format(new Date(order.paidAt || order.createdAt), 'dd/MM HH:mm', {
-          locale: ptBR,
-        })}
-      </span>
-    </div>
-  </div>
-))}
-        </div>
-      </section>
 
       <CreateMesaModal
         open={createMesaOpen}
@@ -565,44 +506,45 @@ const selectedMesaOrders = useMemo(() => {
 
       {selectedMesa && (
         <MesaDetailsModal
-          mesa={selectedMesa}
-          orders={selectedMesaOrders}
-          total={selectedMesaTotal}
-          onClose={() => setSelectedMesa(null)}
-          onAddItems={(order: Order) => {
-            setSelectedMesa(null);
-            setAddItemsTarget(order);
-          }}
-          onOpenOrder={() => {
-            setSelectedMesa(null);
-            setNewOrderMesa(selectedMesa);
-          }}
-          onEditMesa={() => {
-            setEditMesaTarget(selectedMesa);
-          }}
-          onDeleteMesa={() => {
-            setDeleteMesaTarget(selectedMesa);
-            setSelectedMesa(null);
-          }}
-          onFinalize={handleFinalizeMesa}
-          onPrintOrder={(order: Order) =>
-            setPrintJob({ order, onlyBatch: false })
-          }
-          onPrintBatch={(order: Order, batch: OrderBatch) =>
-            setPrintJob({ order, batch, onlyBatch: true })
-          }
-          onEditItem={(order: Order, item: OrderItem) => {
-            setEditingItem({ order, item });
-          }}
-          onDeleteItem={(order: Order, item: OrderItem) => {
-            if (!item.id) {
-              toast.error('Item sem identificador.');
-              return;
-            }
+  mesa={selectedMesa}
+  orders={selectedMesaOrders}
+  total={selectedMesaTotal}
+  onClose={() => setSelectedMesa(null)}
+  onAddItemToMesa={() => {
+    const targetOrder = selectedMesaOrders[selectedMesaOrders.length - 1];
 
-            setDeleteItemTarget({ order, item });
-          }}
-        />
+    if (!targetOrder) {
+      toast.error('Essa mesa ainda não possui pedido aberto.');
+      return;
+    }
+
+    setSelectedMesa(null);
+    setAddItemsTarget(targetOrder);
+  }}
+  onOpenOrder={() => {
+    setSelectedMesa(null);
+    setNewOrderMesa(selectedMesa);
+  }}
+  onEditMesa={() => {
+    setEditMesaTarget(selectedMesa);
+  }}
+  onDeleteMesa={() => {
+    setDeleteMesaTarget(selectedMesa);
+    setSelectedMesa(null);
+  }}
+  onFinalize={handleFinalizeMesa}
+  onEditItem={(order: Order, item: OrderItem) => {
+    setEditingItem({ order, item });
+  }}
+  onDeleteItem={(order: Order, item: OrderItem) => {
+    if (!item.id) {
+      toast.error('Item sem identificador.');
+      return;
+    }
+
+    setDeleteItemTarget({ order, item });
+  }}
+/>
       )}
 
       {newOrderMesa && (
@@ -1467,13 +1409,11 @@ function EditMesaModal({
 
 function RetiradaCard({
   order,
-  onPrintOrder,
   onPrintBatch,
   onAddItems,
   onFinalize,
 }: {
   order: Order;
-  onPrintOrder: () => void;
   onPrintBatch: (batch: OrderBatch) => void;
   onAddItems: () => void;
   onFinalize: () => void;
@@ -1516,14 +1456,6 @@ function RetiradaCard({
             </span>
           </div>
         </div>
-
-        <button
-          onClick={onPrintOrder}
-          className="flex items-center gap-1 text-[11px] font-black bg-orange-500 text-white px-2.5 py-1.5 rounded-lg"
-        >
-          <Printer className="w-3.5 h-3.5" />
-          Imprimir
-        </button>
       </div>
 
       <div className="space-y-3 mb-3">
@@ -1589,13 +1521,11 @@ function MesaDetailsModal({
   orders,
   total,
   onClose,
-  onAddItems,
+  onAddItemToMesa,
   onOpenOrder,
   onEditMesa,
   onDeleteMesa,
   onFinalize,
-  onPrintOrder,
-  onPrintBatch,
   onEditItem,
   onDeleteItem,
 }: {
@@ -1603,13 +1533,11 @@ function MesaDetailsModal({
   orders: Order[];
   total: number;
   onClose: () => void;
-  onAddItems: (order: Order) => void;
+  onAddItemToMesa: () => void;
   onOpenOrder: () => void;
   onEditMesa: () => void;
   onDeleteMesa: () => void;
   onFinalize: () => void;
-  onPrintOrder: (order: Order) => void;
-  onPrintBatch: (order: Order, batch: OrderBatch) => void;
   onEditItem: (order: Order, item: OrderItem) => void;
   onDeleteItem: (order: Order, item: OrderItem) => void;
 }) {
@@ -1709,25 +1637,7 @@ function MesaDetailsModal({
                       </div>
                     </div>
 
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onPrintOrder(order)}
-                        className="flex items-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-xs font-black text-white"
-                      >
-                        <Printer className="h-4 w-4" />
-                        Pedido
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => onAddItems(order)}
-                        className="flex items-center gap-2 rounded-lg bg-primary px-3 py-2 text-xs font-black text-primary-foreground"
-                      >
-                        <PlusCircle className="h-4 w-4" />
-                        Adicionar pedido
-                      </button>
-                    </div>
+                
                   </div>
 
                   <div className="space-y-3">
@@ -1754,17 +1664,6 @@ function MesaDetailsModal({
                                 })}
                               </p>
                             </div>
-
-                            {batch.isAdditional && (
-                              <button
-                                type="button"
-                                onClick={() => onPrintBatch(order, batch)}
-                                className="flex items-center gap-1 rounded-md border border-gray-700 px-2 py-1 text-[10px] font-bold"
-                              >
-                                <Printer className="h-3 w-3" />
-                                Imprimir adicional
-                              </button>
-                            )}
                           </div>
 
                           <div className="space-y-2">
@@ -1861,15 +1760,25 @@ function MesaDetailsModal({
                 </>
               )}
 
-              {isOccupied && (
-                <button
-                  type="button"
-                  onClick={onFinalize}
-                  className="rounded-xl bg-green-600 px-5 py-3 font-black text-white"
-                >
-                  Finalizar pagamento
-                </button>
-              )}
+             {isOccupied && (
+  <>
+    <button
+      type="button"
+      onClick={onAddItemToMesa}
+      className="rounded-xl bg-primary px-5 py-3 font-black text-primary-foreground"
+    >
+      ADICIONAR ITEM
+    </button>
+
+    <button
+      type="button"
+      onClick={onFinalize}
+      className="rounded-xl bg-green-600 px-5 py-3 font-black text-white"
+    >
+      Finalizar pagamento
+    </button>
+  </>
+)}
             </div>
           </div>
         </div>

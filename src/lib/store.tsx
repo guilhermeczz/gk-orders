@@ -1063,32 +1063,33 @@ useEffect(() => {
     [fetchUsers]
   );
 
-  const deleteUser = useCallback(
-    async (id: string) => {
-      const targetUser = users.find((u) => String(u.id) === String(id));
+const deleteUser = useCallback(
+  async (id: string) => {
+    const targetUser = users.find((u) => String(u.id) === String(id));
 
-      const isProtected =
-        targetUser &&
-        (String(targetUser.name || '').trim().toLowerCase() === 'desenvolvedor' ||
-          String(targetUser.username || '').trim().toLowerCase() === 'dev');
+    const isProtected =
+      targetUser &&
+      (String(targetUser.name || '').trim().toLowerCase() === 'desenvolvedor' ||
+        String(targetUser.username || '').trim().toLowerCase() === 'dev');
 
-      if (isProtected) {
-        toast.error('O acesso do Desenvolvedor é protegido e não pode ser removido.');
-        return;
-      }
+    if (isProtected) {
+      toast.error('O acesso do Desenvolvedor é protegido e não pode ser removido.');
+      return;
+    }
 
-      const { error } = await supabase.from('usuarios').delete().eq('id', id);
+    const { error } = await supabase.from('usuarios').delete().eq('id', id);
 
-      if (error) {
-        console.error('Erro ao excluir usuário:', error);
-        toast.error('Erro ao excluir usuário.');
-        return;
-      }
+    if (error) {
+      console.error('Erro ao excluir usuário:', error);
+      toast.error('Erro ao excluir usuário.');
+      return;
+    }
 
-      await fetchUsers();
-    },
-    [fetchUsers, users]
-  );
+    await fetchUsers();
+    toast.success('Usuário removido do sistema.');
+  },
+  [fetchUsers, users]
+);
 
   const addMesa = useCallback(
     async ({
@@ -1302,12 +1303,16 @@ useEffect(() => {
       return isToday || isNotFinished;
     });
 
-  const getArchivedOrders = (startDate: Date, endDate: Date) =>
-    orders.filter((o) => {
+ const getArchivedOrders = (startDate: Date, endDate: Date) =>
+  orders
+    .filter((o) => {
       const date = new Date(o.createdAt);
       return date >= startDate && date <= endDate;
-    });
-
+    })
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
   return (
     <AppContext.Provider
       value={{

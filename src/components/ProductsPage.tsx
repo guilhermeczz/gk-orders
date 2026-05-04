@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { Plus, Trash2, ArrowLeft, Edit2, X, Loader2, Tag, Folder, Search, ChevronRight, ChevronLeft } from 'lucide-react';
 
 import { Link } from '@tanstack/react-router';
+import { AppHeader } from '@/components/AppHeader';
 
 
 
@@ -316,10 +317,13 @@ export function ProductsPage() {
 
 
 
-  return (
+ return (
+  <>
+    <div className="print:hidden">
+      <AppHeader />
+    </div>
 
-    <div className="min-h-screen bg-background pt-8 pb-20">
-
+    <div className="min-h-screen bg-background pt-24 pb-20">
       <div className="px-6 max-w-5xl mx-auto animate-fade-in">
 
        
@@ -798,10 +802,8 @@ export function ProductsPage() {
 
 
 
-      </div>
-
+         </div>
     </div>
-
-  );
-
+  </>
+);
 }

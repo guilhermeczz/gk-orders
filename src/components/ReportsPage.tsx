@@ -1,5 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useAppStore } from '@/lib/store';
+import { AppHeader } from '@/components/AppHeader';
+
 import {
   ArrowLeft,
   CalendarDays,
@@ -36,10 +38,76 @@ function fromInputDate(value: string) {
 }
 
 function money(v: number) {
-  return v.toLocaleString('pt-BR', {
+  return Number(v || 0).toLocaleString('pt-BR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
+}
+
+function getPaymentMethodLabel(method?: string | null) {
+  const normalized = String(method || '').toLowerCase().trim();
+
+  if (normalized === 'dinheiro') return 'Dinheiro';
+  if (normalized === 'pix') return 'PIX';
+  if (normalized === 'credito' || normalized === 'crédito') return 'Crédito';
+  if (normalized === 'debito' || normalized === 'débito') return 'Débito';
+
+  return 'Não definido';
+}
+
+function getOrderStatusInfo(order: any) {
+  const status = String(order.status || '').toLowerCase().trim();
+
+  if (status === 'paid') {
+    return {
+      label: 'Pago',
+      className: 'bg-green-500/10 text-green-500 border-green-500/20',
+    };
+  }
+
+  if (status === 'new') {
+    return {
+      label: order.paid ? 'Pago' : 'Aberto / Não pago',
+      className: order.paid
+        ? 'bg-green-500/10 text-green-500 border-green-500/20'
+        : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
+    };
+  }
+
+  if (status === 'preparing') {
+    return {
+      label: 'Em preparo',
+      className: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
+    };
+  }
+
+  if (status === 'ready') {
+    return {
+      label: 'Pronto',
+      className: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+    };
+  }
+
+  if (status === 'cancelled' || status === 'canceled' || status === 'cancelado') {
+    return {
+      label: 'Cancelado',
+      className: 'bg-red-500/10 text-red-500 border-red-500/20',
+    };
+  }
+
+  if (status === 'deleted' || status === 'excluido' || status === 'excluído') {
+    return {
+      label: 'Excluído',
+      className: 'bg-red-500/10 text-red-500 border-red-500/20',
+    };
+  }
+
+  return {
+    label: order.paid ? 'Pago' : 'Aberto / Não pago',
+    className: order.paid
+      ? 'bg-green-500/10 text-green-500 border-green-500/20'
+      : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20',
+  };
 }
 
 export function ReportsPage() {
@@ -80,7 +148,10 @@ export function ReportsPage() {
     return getArchivedOrders(start, end);
   }, [startDate, endDate, getArchivedOrders]);
 
-  const paidOrders = useMemo(() => orders.filter((o) => o.status === 'paid'), [orders]);
+  const paidOrders = useMemo(
+    () => orders.filter((o) => o.status === 'paid' || o.paid),
+    [orders]
+  );
 
   const totalRevenue = useMemo(() => {
     return paidOrders.reduce((sum, o) => sum + Number(o.total || 0), 0);
@@ -112,6 +183,7 @@ export function ReportsPage() {
       const d = `${String(dateObj.getDate()).padStart(2, '0')}/${String(
         dateObj.getMonth() + 1
       ).padStart(2, '0')}`;
+
       dailyMap[d] = (dailyMap[d] || 0) + Number(o.total || 0);
     });
 
@@ -176,8 +248,8 @@ export function ReportsPage() {
         dateStyle: 'short',
         timeStyle: 'short',
       }),
-      order.customerName,
-      String(order.paymentMethod || 'Não definido').toUpperCase(),
+      order.customerName || 'Não informado',
+      getPaymentMethodLabel(order.paymentMethod),
       String(order.paymentMethod || '').toLowerCase() === 'dinheiro'
         ? `R$ ${money(Number(order.amountReceived || 0))}`
         : '-',
@@ -209,221 +281,291 @@ export function ReportsPage() {
     'w-full px-4 py-3.5 rounded-xl bg-[#111] text-white border border-gray-800 focus:outline-none focus:border-primary focus:shadow-[0_0_15px_rgba(255,106,0,0.3)] transition-all font-bold [color-scheme:dark]';
 
   return (
-    <div className="min-h-screen bg-background pt-8 pb-20">
-      <div className="max-w-6xl mx-auto px-6 animate-fade-in">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 border-b border-border pb-4">
-          <div className="flex items-center gap-4">
-            <Link
-              to="/dashboard"
-              className="p-2.5 bg-card border border-border rounded-xl text-muted-foreground hover:text-primary hover:border-primary transition-all active:scale-95 shadow-sm hover:-translate-x-1"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </Link>
-            <h2 className="text-3xl font-black text-primary drop-shadow-sm flex items-center gap-3">
-              <LineChart className="w-8 h-8" />
-              Visão Geral e Faturamento
-            </h2>
-          </div>
-
-          <button
-            onClick={handleDownloadPDF}
-            disabled={totalRevenue === 0}
-            className="flex items-center gap-2 px-5 py-2.5 bg-background border border-border hover:border-primary hover:text-primary text-foreground rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
-          >
-            <Download className="w-5 h-5" />
-            Exportar PDF
-          </button>
-        </div>
-
-        <div className="bg-card border border-border rounded-3xl p-5 mb-8 flex flex-col md:flex-row gap-5 items-center shadow-sm">
-          <div className="w-full md:flex-1">
-            <label className="text-xs font-black text-muted-foreground block mb-2 uppercase tracking-widest">
-              <CalendarDays className="w-4 h-4 inline mr-1 mb-0.5" /> Data Inicial
-            </label>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className={inputClass}
-            />
-          </div>
-
-          <div className="w-full md:flex-1">
-            <label className="text-xs font-black text-muted-foreground block mb-2 uppercase tracking-widest">
-              <CalendarDays className="w-4 h-4 inline mr-1 mb-0.5" /> Data Final
-            </label>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className={inputClass}
-            />
-          </div>
-        </div>
-
-        {totalRevenue === 0 ? (
-          <div className="bg-card border border-border rounded-3xl p-12 flex flex-col items-center justify-center text-center shadow-lg animate-slide-up mt-4">
-            <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mb-6">
-              <Store className="w-12 h-12 text-primary" />
-            </div>
-            <h3 className="text-2xl font-black text-foreground mb-2">Ainda não há vendas neste período</h3>
-            <p className="text-muted-foreground max-w-md mb-8">
-              Nenhum pedido finalizado e pago foi encontrado entre as datas selecionadas.
-            </p>
-            <Link
-              to="/dashboard"
-              className="px-8 py-4 rounded-xl bg-primary text-black font-black text-lg shadow-[0_0_20px_rgba(255,106,0,0.3)] hover:-translate-y-1 transition-all active:scale-95"
-            >
-              Ir para o Painel de Pedidos
-            </Link>
-          </div>
-        ) : (
-          <div className="animate-slide-up">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-              <div className="bg-card border border-primary/40 rounded-3xl p-6 shadow-[0_0_25px_rgba(255,106,0,0.15)] flex flex-col justify-center relative overflow-hidden group">
-                <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity group-hover:scale-110 duration-500 pointer-events-none">
-                  <TrendingUp className="w-32 h-32 text-primary" />
-                </div>
-                <p className="text-xs font-black text-primary uppercase tracking-widest mb-2">Faturamento Total</p>
-                <p className="text-4xl font-black text-foreground mb-1 tracking-tight">R$ {money(totalRevenue)}</p>
-                <p className="text-xs font-bold text-muted-foreground mt-1 bg-background w-fit px-2 py-1 rounded-md border border-border/50">
-                  {formatDate(fromInputDate(startDate))} — {formatDate(fromInputDate(endDate))}
-                </p>
-              </div>
-
-              <div className="bg-card border border-border rounded-3xl p-6 shadow-sm flex flex-col justify-center hover:border-primary/30 transition-colors">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="p-2.5 bg-primary/10 text-primary rounded-xl">
-                    <Receipt className="w-5 h-5" />
-                  </div>
-                  <p className="text-xs font-black text-muted-foreground uppercase tracking-widest">Pedidos Pagos</p>
-                </div>
-                <p className="text-4xl font-black text-foreground tracking-tight">{paidOrders.length}</p>
-              </div>
-
-              <div className="bg-card border border-border rounded-3xl p-6 shadow-sm flex flex-col justify-center hover:border-green-500/30 transition-colors">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="p-2.5 bg-green-500/10 text-green-500 rounded-xl">
-                    <Wallet className="w-5 h-5" />
-                  </div>
-                  <p className="text-xs font-black text-muted-foreground uppercase tracking-widest">Ticket Médio</p>
-                </div>
-                <p className="text-4xl font-black text-foreground tracking-tight">R$ {money(ticketMedio)}</p>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-8">
-              <PaymentCard label="Dinheiro" value={paymentStats.dinheiro} icon={<Banknote className="w-4 h-4" />} color="text-green-500" />
-              <PaymentCard label="PIX" value={paymentStats.pix} icon={<DollarSign className="w-4 h-4" />} color="text-teal-500" />
-              <PaymentCard label="Crédito" value={paymentStats.credito} icon={<CreditCard className="w-4 h-4" />} color="text-blue-500" />
-              <PaymentCard label="Débito" value={paymentStats.debito} icon={<CreditCard className="w-4 h-4" />} color="text-purple-500" />
-            </div>
-
-            {chartData.length > 0 && (
-              <div className="bg-card border border-border rounded-3xl p-6 shadow-sm mb-8">
-                <h3 className="font-black text-muted-foreground mb-8 uppercase tracking-widest text-xs flex items-center gap-2">
-                  <LineChart className="w-4 h-4 text-primary" />
-                  Desempenho por Dia
-                </h3>
-
-                <div className="flex items-end justify-around h-64 gap-3 pt-4 border-b border-border/50 pb-2 relative">
-                  <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-10 pb-8">
-                    <div className="border-t border-foreground w-full"></div>
-                    <div className="border-t border-foreground w-full"></div>
-                    <div className="border-t border-foreground w-full"></div>
-                    <div className="border-t border-foreground w-full"></div>
-                  </div>
-
-                  {chartData.map((data, index) => {
-                    const heightPercent = chartData.length === 1 ? 85 : (data.total / maxDailyRevenue) * 85;
-                    return (
-                      <div key={index} className="h-full flex flex-col items-center justify-end flex-1 group z-10">
-                        <div
-                          className="w-full max-w-[60px] bg-primary rounded-t-lg transition-all duration-700 shadow-[0_0_10px_rgba(255,106,0,0.2)] group-hover:shadow-[0_0_15px_rgba(255,106,0,0.5)] group-hover:brightness-110 relative flex justify-center"
-                          style={{ height: `${Math.max(heightPercent, 5)}%` }}
-                        >
-                          <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-all duration-300 transform group-hover:-translate-y-1 bg-black border border-gray-800 text-white text-xs font-bold py-1.5 px-3 rounded-lg whitespace-nowrap shadow-xl pointer-events-none z-50">
-                            R$ {money(data.total)}
-                          </div>
-                        </div>
-                        <span className="text-[11px] font-bold text-muted-foreground mt-3">{data.date}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <h3 className="font-black text-foreground mb-4 text-xl flex items-center gap-2 mt-10">
-              Histórico de Pedidos
-              <span className="text-sm bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{orders.length}</span>
-            </h3>
-
-            <div className="space-y-3">
-              {orders.map((order: any) => (
-                <div
-                  key={order.id}
-                  className="bg-card border border-border rounded-xl p-4 shadow-sm hover:border-primary/50 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 flex flex-col md:flex-row md:items-center justify-between gap-4 group"
-                >
-                  <div>
-                    <div className="flex items-center gap-3 mb-1.5 flex-wrap">
-                      <span className="font-black bg-muted px-2 py-1 rounded-md text-muted-foreground text-xs">
-                        #{String(order.number).padStart(4, '0')}
-                      </span>
-                      <span className="font-bold text-foreground text-base group-hover:text-primary transition-colors">
-                        {order.customerName}
-                      </span>
-                      {order.status === 'paid' ? (
-                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-green-500/10 text-green-500 border border-green-500/20">
-                          Pago
-                        </span>
-                      ) : (
-                        <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-red-500/10 text-red-500 border border-red-500/20">
-                          Cancelado/Excluído
-                        </span>
-                      )}
-                    </div>
-
-                    <p className="text-sm text-muted-foreground">
-                      {new Date(order.createdAt).toLocaleString('pt-BR', {
-                        dateStyle: 'short',
-                        timeStyle: 'short',
-                      })}
-                    </p>
-
-                    <p className="text-sm mt-2 text-muted-foreground/80 italic border-l-2 border-border pl-3 py-0.5">
-                      {order.items.map((i: any) => `${i.quantity}x ${i.productName}`).join(' • ')}
-                    </p>
-
-                    {String(order.paymentMethod || '').toLowerCase() === 'dinheiro' && (
-                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                        <div className="bg-background border border-border rounded-lg px-3 py-2">
-                          <span className="text-muted-foreground">Recebido:</span>{' '}
-                          <span className="font-bold text-green-500">R$ {money(Number(order.amountReceived || 0))}</span>
-                        </div>
-                        <div className="bg-background border border-border rounded-lg px-3 py-2">
-                          <span className="text-muted-foreground">Troco:</span>{' '}
-                          <span className="font-bold text-orange-500">R$ {money(Number(order.changeGiven || 0))}</span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="text-right">
-                    <div className="text-xs uppercase font-black text-muted-foreground mb-2">
-                      {order.paymentMethod || 'Não definido'}
-                    </div>
-                    <span className="font-black text-xl text-foreground bg-background px-4 py-2 rounded-xl border border-border shadow-inner flex items-center gap-1 w-fit ml-auto">
-                      <span className="text-sm text-muted-foreground">R$</span> {money(Number(order.total || 0))}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+    <>
+      <div className="print:hidden">
+        <AppHeader />
       </div>
-    </div>
+
+      <div className="min-h-screen bg-background pt-24 pb-20">
+        <div className="max-w-6xl mx-auto px-6 animate-fade-in">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8 border-b border-border pb-4">
+            <div className="flex items-center gap-4">
+              <Link
+                to="/dashboard"
+                className="p-2.5 bg-card border border-border rounded-xl text-muted-foreground hover:text-primary hover:border-primary transition-all active:scale-95 shadow-sm hover:-translate-x-1"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </Link>
+
+              <h2 className="text-3xl font-black text-primary drop-shadow-sm flex items-center gap-3">
+                <LineChart className="w-8 h-8" />
+                Visão Geral e Faturamento
+              </h2>
+            </div>
+
+            <button
+              onClick={handleDownloadPDF}
+              disabled={totalRevenue === 0}
+              className="flex items-center gap-2 px-5 py-2.5 bg-background border border-border hover:border-primary hover:text-primary text-foreground rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+            >
+              <Download className="w-5 h-5" />
+              Exportar PDF
+            </button>
+          </div>
+
+          <div className="bg-card border border-border rounded-3xl p-5 mb-8 flex flex-col md:flex-row gap-5 items-center shadow-sm">
+            <div className="w-full md:flex-1">
+              <label className="text-xs font-black text-muted-foreground block mb-2 uppercase tracking-widest">
+                <CalendarDays className="w-4 h-4 inline mr-1 mb-0.5" /> Data Inicial
+              </label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+
+            <div className="w-full md:flex-1">
+              <label className="text-xs font-black text-muted-foreground block mb-2 uppercase tracking-widest">
+                <CalendarDays className="w-4 h-4 inline mr-1 mb-0.5" /> Data Final
+              </label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className={inputClass}
+              />
+            </div>
+          </div>
+
+          {totalRevenue === 0 ? (
+            <div className="bg-card border border-border rounded-3xl p-12 flex flex-col items-center justify-center text-center shadow-lg animate-slide-up mt-4">
+              <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+                <Store className="w-12 h-12 text-primary" />
+              </div>
+
+              <h3 className="text-2xl font-black text-foreground mb-2">
+                Ainda não há vendas neste período
+              </h3>
+
+              <p className="text-muted-foreground max-w-md mb-8">
+                Nenhum pedido finalizado e pago foi encontrado entre as datas selecionadas.
+              </p>
+
+              <Link
+                to="/dashboard"
+                className="px-8 py-4 rounded-xl bg-primary text-black font-black text-lg shadow-[0_0_20px_rgba(255,106,0,0.3)] hover:-translate-y-1 transition-all active:scale-95"
+              >
+                Ir para o Painel de Pedidos
+              </Link>
+            </div>
+          ) : (
+            <div className="animate-slide-up">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+                <div className="bg-card border border-primary/40 rounded-3xl p-6 shadow-[0_0_25px_rgba(255,106,0,0.15)] flex flex-col justify-center relative overflow-hidden group">
+                  <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity group-hover:scale-110 duration-500 pointer-events-none">
+                    <TrendingUp className="w-32 h-32 text-primary" />
+                  </div>
+
+                  <p className="text-xs font-black text-primary uppercase tracking-widest mb-2">
+                    Faturamento Total
+                  </p>
+
+                  <p className="text-4xl font-black text-foreground mb-1 tracking-tight">
+                    R$ {money(totalRevenue)}
+                  </p>
+
+                  <p className="text-xs font-bold text-muted-foreground mt-1 bg-background w-fit px-2 py-1 rounded-md border border-border/50">
+                    {formatDate(fromInputDate(startDate))} — {formatDate(fromInputDate(endDate))}
+                  </p>
+                </div>
+
+                <div className="bg-card border border-border rounded-3xl p-6 shadow-sm flex flex-col justify-center hover:border-primary/30 transition-colors">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="p-2.5 bg-primary/10 text-primary rounded-xl">
+                      <Receipt className="w-5 h-5" />
+                    </div>
+                    <p className="text-xs font-black text-muted-foreground uppercase tracking-widest">
+                      Pedidos Pagos
+                    </p>
+                  </div>
+
+                  <p className="text-4xl font-black text-foreground tracking-tight">
+                    {paidOrders.length}
+                  </p>
+                </div>
+
+                <div className="bg-card border border-border rounded-3xl p-6 shadow-sm flex flex-col justify-center hover:border-green-500/30 transition-colors">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="p-2.5 bg-green-500/10 text-green-500 rounded-xl">
+                      <Wallet className="w-5 h-5" />
+                    </div>
+                    <p className="text-xs font-black text-muted-foreground uppercase tracking-widest">
+                      Ticket Médio
+                    </p>
+                  </div>
+
+                  <p className="text-4xl font-black text-foreground tracking-tight">
+                    R$ {money(ticketMedio)}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-5 mb-8">
+                <PaymentCard
+                  label="Dinheiro"
+                  value={paymentStats.dinheiro}
+                  icon={<Banknote className="w-4 h-4" />}
+                  color="text-green-500"
+                />
+                <PaymentCard
+                  label="PIX"
+                  value={paymentStats.pix}
+                  icon={<DollarSign className="w-4 h-4" />}
+                  color="text-teal-500"
+                />
+                <PaymentCard
+                  label="Crédito"
+                  value={paymentStats.credito}
+                  icon={<CreditCard className="w-4 h-4" />}
+                  color="text-blue-500"
+                />
+                <PaymentCard
+                  label="Débito"
+                  value={paymentStats.debito}
+                  icon={<CreditCard className="w-4 h-4" />}
+                  color="text-purple-500"
+                />
+              </div>
+
+              {chartData.length > 0 && (
+                <div className="bg-card border border-border rounded-3xl p-6 shadow-sm mb-8">
+                  <h3 className="font-black text-muted-foreground mb-8 uppercase tracking-widest text-xs flex items-center gap-2">
+                    <LineChart className="w-4 h-4 text-primary" />
+                    Desempenho por Dia
+                  </h3>
+
+                  <div className="flex items-end justify-around h-64 gap-3 pt-4 border-b border-border/50 pb-2 relative">
+                    <div className="absolute inset-0 flex flex-col justify-between pointer-events-none opacity-10 pb-8">
+                      <div className="border-t border-foreground w-full" />
+                      <div className="border-t border-foreground w-full" />
+                      <div className="border-t border-foreground w-full" />
+                      <div className="border-t border-foreground w-full" />
+                    </div>
+
+                    {chartData.map((data, index) => {
+                      const heightPercent =
+                        chartData.length === 1 ? 85 : (data.total / maxDailyRevenue) * 85;
+
+                      return (
+                        <div
+                          key={index}
+                          className="h-full flex flex-col items-center justify-end flex-1 group z-10"
+                        >
+                          <div
+                            className="w-full max-w-[60px] bg-primary rounded-t-lg transition-all duration-700 shadow-[0_0_10px_rgba(255,106,0,0.2)] group-hover:shadow-[0_0_15px_rgba(255,106,0,0.5)] group-hover:brightness-110 relative flex justify-center"
+                            style={{ height: `${Math.max(heightPercent, 5)}%` }}
+                          >
+                            <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-all duration-300 transform group-hover:-translate-y-1 bg-black border border-gray-800 text-white text-xs font-bold py-1.5 px-3 rounded-lg whitespace-nowrap shadow-xl pointer-events-none z-50">
+                              R$ {money(data.total)}
+                            </div>
+                          </div>
+
+                          <span className="text-[11px] font-bold text-muted-foreground mt-3">
+                            {data.date}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              <h3 className="font-black text-foreground mb-4 text-xl flex items-center gap-2 mt-10">
+                Histórico de Pedidos
+                <span className="text-sm bg-muted text-muted-foreground px-2 py-0.5 rounded-full">
+                  {orders.length}
+                </span>
+              </h3>
+
+              <div className="space-y-3">
+                {orders.map((order: any) => {
+                  const statusInfo = getOrderStatusInfo(order);
+
+                  return (
+                    <div
+                      key={order.id}
+                      className="bg-card border border-border rounded-xl p-4 shadow-sm hover:border-primary/50 transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 flex flex-col md:flex-row md:items-center justify-between gap-4 group"
+                    >
+                      <div>
+                        <div className="flex items-center gap-3 mb-1.5 flex-wrap">
+                          <span className="font-black bg-muted px-2 py-1 rounded-md text-muted-foreground text-xs">
+                            #{String(order.number).padStart(4, '0')}
+                          </span>
+
+                          <span className="font-bold text-foreground text-base group-hover:text-primary transition-colors">
+                            {order.customerName || 'Não informado'}
+                          </span>
+
+                          <span
+                            className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${statusInfo.className}`}
+                          >
+                            {statusInfo.label}
+                          </span>
+                        </div>
+
+                        <p className="text-sm text-muted-foreground">
+                          {new Date(order.createdAt).toLocaleString('pt-BR', {
+                            dateStyle: 'short',
+                            timeStyle: 'short',
+                          })}
+                        </p>
+
+                        <p className="text-sm mt-2 text-muted-foreground/80 italic border-l-2 border-border pl-3 py-0.5">
+                          {(order.items ?? [])
+                            .map((i: any) => `${i.quantity}x ${i.productName}`)
+                            .join(' • ') || 'Sem itens'}
+                        </p>
+
+                        {String(order.paymentMethod || '').toLowerCase() === 'dinheiro' && (
+                          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                            <div className="bg-background border border-border rounded-lg px-3 py-2">
+                              <span className="text-muted-foreground">Recebido:</span>{' '}
+                              <span className="font-bold text-green-500">
+                                R$ {money(Number(order.amountReceived || 0))}
+                              </span>
+                            </div>
+
+                            <div className="bg-background border border-border rounded-lg px-3 py-2">
+                              <span className="text-muted-foreground">Troco:</span>{' '}
+                              <span className="font-bold text-orange-500">
+                                R$ {money(Number(order.changeGiven || 0))}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-xs uppercase font-black text-muted-foreground mb-2">
+                          {getPaymentMethodLabel(order.paymentMethod)}
+                        </div>
+
+                        <span className="font-black text-xl text-foreground bg-background px-4 py-2 rounded-xl border border-border shadow-inner flex items-center gap-1 w-fit ml-auto">
+                          <span className="text-sm text-muted-foreground">R$</span>{' '}
+                          {money(Number(order.total || 0))}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
