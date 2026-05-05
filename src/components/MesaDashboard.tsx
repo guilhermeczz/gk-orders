@@ -1590,8 +1590,7 @@ function MesaDetailsModal({
 
   return (
     <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/90 p-4 print:hidden">
-      <div className="w-full max-w-4xl max-h-[92vh] overflow-hidden rounded-3xl border border-gray-800 bg-[#111] text-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-gray-800 p-6">
+<div className="w-full max-w-4xl max-h-[92vh] overflow-hidden rounded-3xl border border-gray-800 bg-[#111] text-white shadow-2xl flex flex-col">        <div className="flex items-center justify-between border-b border-gray-800 p-6">
           <div>
             <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
               Detalhes da Mesa
@@ -1627,8 +1626,8 @@ function MesaDetailsModal({
           </div>
         </div>
 
-        <div className="max-h-[52vh] overflow-y-auto p-6">
-          {!isOccupied ? (
+<div className="flex-1 overflow-y-auto p-4 sm:p-6">
+            {!isOccupied ? (
             <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-8 text-center">
               <UtensilsCrossed className="mx-auto mb-3 h-10 w-10 text-gray-500" />
               <p className="text-lg font-bold">Mesa livre</p>
@@ -1704,59 +1703,82 @@ function MesaDetailsModal({
 
                           <div className="space-y-2">
                             {batch.items.map((item: OrderItem, idx: number) => {
-                              const itemTotal = getItemTotal(item);
+  const itemAdditions = item.additions ?? [];
+  const additionsTotal = itemAdditions.reduce(
+    (sum, addition) =>
+      sum + Number(addition.quantity || 0) * Number(addition.unitPrice || 0),
+    0
+  );
 
-                              return (
-                                <div
-                                  key={`${batch.id}-${idx}-${item.id ?? item.productId}`}
-                                  className="flex items-center justify-between gap-4 rounded-lg border border-gray-800 bg-[#121212] px-3 py-2 text-sm"
-                                >
-                                  <div className="flex-1">
-                                    <div>
-                                      <span className="mr-1 font-black text-primary">
-                                        {item.quantity}x
-                                      </span>
-                                      {item.productName}
-                                    </div>
+  const itemTotal =
+    Number(item.quantity || 0) * Number(item.unitPrice || 0) + additionsTotal;
 
-                                    {(item.additions ?? []).length > 0 && (
-                                      <div className="ml-5 mt-1 space-y-0.5">
-                                        {(item.additions ?? []).map((addition) => (
-                                          <div
-                                            key={`${item.productId}-${addition.productId}`}
-                                            className="text-[11px] font-bold text-gray-400"
-                                          >
-                                            + {addition.quantity}x {addition.productName}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
+  return (
+    <div
+      key={`${batch.id}-${idx}-${item.id ?? item.productId}`}
+      className="rounded-2xl border border-gray-800 bg-[#121212] p-3 text-sm"
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-2">
+            <span className="shrink-0 font-black text-primary">
+              {item.quantity}x
+            </span>
 
-                                  <div className="flex items-center gap-3">
-                                    <span className="font-bold min-w-[80px] text-right">
-                                      {formatMoney(itemTotal)}
-                                    </span>
+            <div className="min-w-0">
+              <p className="break-words font-bold leading-snug text-white">
+                {item.productName}
+              </p>
 
-                                    <button
-                                      type="button"
-                                      onClick={() => onEditItem(order, item)}
-                                      className="rounded-md border border-blue-500/30 bg-blue-500/10 p-2 text-blue-400"
-                                    >
-                                      <Pencil className="h-4 w-4" />
-                                    </button>
+              {itemAdditions.length > 0 && (
+                <div className="mt-2 space-y-1 rounded-xl border border-gray-800 bg-black/25 p-2">
+                  {itemAdditions.map((addition) => (
+                    <p
+                      key={`${item.id ?? item.productId}-${addition.productId}`}
+                      className="text-xs font-bold leading-relaxed text-gray-300"
+                    >
+                      <span className="text-primary">+</span>{' '}
+                      {addition.quantity}x {addition.productName}
+                      <span className="ml-1 text-gray-500">
+                        ({formatMoney(addition.quantity * addition.unitPrice)})
+                      </span>
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
 
-                                    <button
-                                      type="button"
-                                      onClick={() => onDeleteItem(order, item)}
-                                      className="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-red-400"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })}
+        <div className="flex items-center justify-between gap-3 sm:justify-end">
+          <span className="shrink-0 rounded-xl border border-gray-800 bg-black/30 px-3 py-2 text-base font-black text-white">
+            {formatMoney(itemTotal)}
+          </span>
+
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => onEditItem(order, item)}
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 transition-all active:scale-95"
+              title="Editar item"
+            >
+              <Pencil className="h-5 w-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onDeleteItem(order, item)}
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 transition-all active:scale-95"
+              title="Excluir item"
+            >
+              <Trash2 className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+})}
                           </div>
 
                           {obs && (
