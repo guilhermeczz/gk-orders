@@ -25,6 +25,52 @@ interface CashPaymentMeta {
   changeGiven?: number;
 }
 
+const normalizeAdditionsForDb = (additions?: OrderItem['additions']) => {
+  return (additions ?? [])
+    .filter((addition) => Number(addition.quantity || 0) > 0)
+    .map((addition) => ({
+      productId: String(addition.productId),
+      productName: String(addition.productName),
+      quantity: Number(addition.quantity || 0),
+      unitPrice: Number(addition.unitPrice || 0),
+    }));
+};
+
+const mapAdditionsFromDb = (value: any): OrderItem['additions'] => {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .map((addition) => ({
+      productId: String(addition.productId || ''),
+      productName: String(addition.productName || ''),
+      quantity: Number(addition.quantity || 0),
+      unitPrice: Number(addition.unitPrice || 0),
+    }))
+    .filter(
+      (addition) =>
+        addition.productId && addition.productName && addition.quantity > 0
+    );
+};
+
+const getItemAdditionsTotal = (item: OrderItem) => {
+  return (item.additions ?? []).reduce(
+    (sum, addition) =>
+      sum + Number(addition.quantity || 0) * Number(addition.unitPrice || 0),
+    0
+  );
+};
+
+const getItemTotal = (item: OrderItem) => {
+  return (
+    Number(item.quantity || 0) * Number(item.unitPrice || 0) +
+    getItemAdditionsTotal(item)
+  );
+};
+
+const getItemsTotal = (items: OrderItem[]) => {
+  return items.reduce((sum, item) => sum + getItemTotal(item), 0);
+};
+
 interface AppState {
   orders: Order[];
   products: Product[];
@@ -244,6 +290,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           batchId: item.lote_id ?? undefined,
           batchNotes: item.lote_observacao || item.batch_notes || '',
           createdAt: item.batch_created_at || item.created_at || o.created_at,
+          additions: mapAdditionsFromDb(item.adicionais),
         }));
 
         const groupedBatches = new Map<number, OrderBatch>();
@@ -272,6 +319,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             batchId: item.lote_id ?? undefined,
             batchNotes: item.lote_observacao || item.batch_notes || '',
             createdAt: item.batch_created_at || item.created_at || o.created_at,
+            additions: mapAdditionsFromDb(item.adicionais),
           });
         });
 
@@ -310,83 +358,83 @@ export function AppProvider({ children }: { children: ReactNode }) {
     fetchData();
   }, [fetchData]);
 
-useEffect(() => {
-  let isMounted = true;
-  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+  useEffect(() => {
+    let isMounted = true;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const refreshNow = () => {
-    if (!isMounted) return;
-
-    if (refreshTimer) {
-      clearTimeout(refreshTimer);
-    }
-
-    refreshTimer = setTimeout(async () => {
+    const refreshNow = () => {
       if (!isMounted) return;
 
-      try {
-        await fetchData();
-      } catch (error) {
-        console.error('Erro ao sincronizar dados em tempo real:', error);
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
       }
-    }, 150);
-  };
 
-  const channelName = `gardens-operacional-realtime-${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2)}`;
+      refreshTimer = setTimeout(async () => {
+        if (!isMounted) return;
 
-  const channel = supabase
-    .channel(channelName)
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'pedidos' },
-      () => refreshNow()
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'pedido_itens' },
-      () => refreshNow()
-    )
-    .on(
-      'postgres_changes',
-      { event: '*', schema: 'public', table: 'mesas' },
-      () => refreshNow()
-    )
-    .subscribe((status) => {
-      console.log('Realtime Gardens:', status);
+        try {
+          await fetchData();
+        } catch (error) {
+          console.error('Erro ao sincronizar dados em tempo real:', error);
+        }
+      }, 150);
+    };
 
-      if (status === 'SUBSCRIBED') {
+    const channelName = `gardens-operacional-realtime-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pedidos' },
+        () => refreshNow()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'pedido_itens' },
+        () => refreshNow()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'mesas' },
+        () => refreshNow()
+      )
+      .subscribe((status) => {
+        console.log('Realtime Gardens:', status);
+
+        if (status === 'SUBSCRIBED') {
+          refreshNow();
+        }
+      });
+
+    const handleFocus = () => {
+      refreshNow();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
         refreshNow();
       }
-    });
+    };
 
-  const handleFocus = () => {
-    refreshNow();
-  };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible') {
-      refreshNow();
-    }
-  };
+    return () => {
+      isMounted = false;
 
-  window.addEventListener('focus', handleFocus);
-  document.addEventListener('visibilitychange', handleVisibilityChange);
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
 
-  return () => {
-    isMounted = false;
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
 
-    if (refreshTimer) {
-      clearTimeout(refreshTimer);
-    }
-
-    window.removeEventListener('focus', handleFocus);
-    document.removeEventListener('visibilitychange', handleVisibilityChange);
-
-    supabase.removeChannel(channel);
-  };
-}, [fetchData]);
+      supabase.removeChannel(channel);
+    };
+  }, [fetchData]);
 
   const addOrder = useCallback(
     async (
@@ -396,10 +444,7 @@ useEffect(() => {
       createdBy?: string,
       mesaId?: string | null
     ) => {
-      const total = items.reduce(
-        (sum, item) => sum + item.quantity * item.unitPrice,
-        0
-      );
+      const total = getItemsTotal(items);
 
       const safeCreatedBy = String(createdBy || '').trim() || 'Operador';
 
@@ -441,6 +486,7 @@ useEffect(() => {
         produto_nome: item.productName,
         quantidade: item.quantity,
         preco_unitario: item.unitPrice,
+        adicionais: normalizeAdditionsForDb(item.additions),
         batch_number: 1,
         batch_notes: notes,
         batch_created_at: new Date().toISOString(),
@@ -465,10 +511,7 @@ useEffect(() => {
       items: OrderItem[],
       notes: string = ''
     ) => {
-      const total = items.reduce(
-        (sum, item) => sum + item.quantity * item.unitPrice,
-        0
-      );
+      const total = getItemsTotal(items);
 
       const { error: orderError } = await supabase
         .from('pedidos')
@@ -494,6 +537,7 @@ useEffect(() => {
         produto_nome: item.productName,
         quantidade: item.quantity,
         preco_unitario: item.unitPrice,
+        adicionais: normalizeAdditionsForDb(item.additions),
         batch_number: 1,
         batch_notes: notes,
         batch_created_at: new Date().toISOString(),
@@ -521,10 +565,7 @@ useEffect(() => {
           ? order.itemBatches.length + 1
           : 2;
 
-      const additionalTotal = items.reduce(
-        (sum, item) => sum + item.quantity * item.unitPrice,
-        0
-      );
+      const additionalTotal = getItemsTotal(items);
 
       const nextTotal = Number(order.total || 0) + additionalTotal;
 
@@ -545,6 +586,7 @@ useEffect(() => {
         produto_nome: item.productName,
         quantidade: item.quantity,
         preco_unitario: item.unitPrice,
+        adicionais: normalizeAdditionsForDb(item.additions),
         batch_number: nextBatchNumber,
         batch_notes: notes,
         batch_created_at: nowIso,
@@ -594,10 +636,7 @@ useEffect(() => {
           String(item.id) === String(itemId) ? { ...item, quantity: qty } : item
         );
 
-        const newTotal = updatedItems.reduce(
-          (sum, item) => sum + Number(item.quantity) * Number(item.unitPrice),
-          0
-        );
+        const newTotal = getItemsTotal(updatedItems);
 
         const { error: orderError } = await supabase
           .from('pedidos')
@@ -672,10 +711,7 @@ useEffect(() => {
             }
           }
         } else {
-          const newTotal = remainingItems.reduce(
-            (sum, item) => sum + Number(item.quantity) * Number(item.unitPrice),
-            0
-          );
+          const newTotal = getItemsTotal(remainingItems);
 
           const { error: orderUpdateError } = await supabase
             .from('pedidos')
@@ -770,10 +806,11 @@ useEffect(() => {
         if (openSession?.id) {
           cashSessionId = openSession.id;
         }
+
         if (!cashSessionId) {
-  toast.error('O caiixa esta fechado, ERRO.');
-  throw new Error('Nenhum caixa aberto.');
-}
+          toast.error('O caixa está fechado.');
+          throw new Error('Nenhum caixa aberto.');
+        }
 
         const updatePayload: any = {
           status: 'paid',
@@ -827,7 +864,7 @@ useEffect(() => {
         toast.success('Pagamento confirmado!');
       } catch (error) {
         console.error('Erro ao pagar pedido:', error);
-        toast.error('Não foi possível finalizar o pagamento, Abra o caixa.');
+        toast.error('Não foi possível finalizar o pagamento. Abra o caixa.');
         throw error;
       }
     },
@@ -863,10 +900,11 @@ useEffect(() => {
         if (openSession?.id) {
           cashSessionId = openSession.id;
         }
+
         if (!cashSessionId) {
-  toast.error('O caixa esta fechado, ERRO.');
-  throw new Error('Nenhum caixa aberto.');
-}
+          toast.error('O caixa está fechado.');
+          throw new Error('Nenhum caixa aberto.');
+        }
 
         const updatePayload: any = {
           status: 'paid',
@@ -926,7 +964,7 @@ useEffect(() => {
         toast.success('Pagamento da mesa finalizado!');
       } catch (error) {
         console.error('Erro ao pagar pedidos em lote:', error);
-        toast.error('Não foi possível finalizar os pedidos da mesa, CAIXA FECHADO.');
+        toast.error('Não foi possível finalizar os pedidos da mesa. Caixa fechado.');
         throw error;
       }
     },
@@ -1071,62 +1109,62 @@ useEffect(() => {
     [fetchUsers]
   );
 
-const deleteUser = useCallback(
-  async (id: string) => {
-    const targetUser = users.find((u) => String(u.id) === String(id));
+  const deleteUser = useCallback(
+    async (id: string) => {
+      const targetUser = users.find((u) => String(u.id) === String(id));
 
-    const isProtected =
-      targetUser &&
-      (String(targetUser.name || '').trim().toLowerCase() === 'desenvolvedor' ||
-        String(targetUser.username || '').trim().toLowerCase() === 'dev');
+      const isProtected =
+        targetUser &&
+        (String(targetUser.name || '').trim().toLowerCase() === 'desenvolvedor' ||
+          String(targetUser.username || '').trim().toLowerCase() === 'dev');
 
-    if (isProtected) {
-      toast.error('O acesso do Desenvolvedor é protegido e não pode ser removido.');
-      return;
-    }
+      if (isProtected) {
+        toast.error('O acesso do Desenvolvedor é protegido e não pode ser removido.');
+        return;
+      }
 
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-    const loggedUserId = session?.user?.id ? String(session.user.id) : null;
-    const isDeletingLoggedUser = loggedUserId === String(id);
+      const loggedUserId = session?.user?.id ? String(session.user.id) : null;
+      const isDeletingLoggedUser = loggedUserId === String(id);
 
-    const { data, error } = await supabase.functions.invoke('delete-operator', {
-      body: {
-        userId: id,
-      },
-    });
+      const { data, error } = await supabase.functions.invoke('delete-operator', {
+        body: {
+          userId: id,
+        },
+      });
 
-    if (error) {
-      console.error('Erro ao chamar função delete-operator:', error);
-      toast.error('Não foi possível excluir o operador.');
-      return;
-    }
+      if (error) {
+        console.error('Erro ao chamar função delete-operator:', error);
+        toast.error('Não foi possível excluir o operador.');
+        return;
+      }
 
-    if (data?.error) {
-      toast.error(data.error);
-      return;
-    }
+      if (data?.error) {
+        toast.error(data.error);
+        return;
+      }
 
-    await fetchUsers();
+      await fetchUsers();
 
-    if (isDeletingLoggedUser || data?.deletedCurrentUser) {
-      toast.warning('Seu acesso foi removido. Você será desconectado.');
+      if (isDeletingLoggedUser || data?.deletedCurrentUser) {
+        toast.warning('Seu acesso foi removido. Você será desconectado.');
 
-      await supabase.auth.signOut();
+        await supabase.auth.signOut();
 
-      setTimeout(() => {
-        window.location.href = '/';
-      }, 800);
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 800);
 
-      return;
-    }
+        return;
+      }
 
-    toast.success('Operador removido com sucesso.');
-  },
-  [fetchUsers, users]
-);
+      toast.success('Operador removido com sucesso.');
+    },
+    [fetchUsers, users]
+  );
 
   const addMesa = useCallback(
     async ({
@@ -1340,16 +1378,17 @@ const deleteUser = useCallback(
       return isToday || isNotFinished;
     });
 
- const getArchivedOrders = (startDate: Date, endDate: Date) =>
-  orders
-    .filter((o) => {
-      const date = new Date(o.createdAt);
-      return date >= startDate && date <= endDate;
-    })
-    .sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
+  const getArchivedOrders = (startDate: Date, endDate: Date) =>
+    orders
+      .filter((o) => {
+        const date = new Date(o.createdAt);
+        return date >= startDate && date <= endDate;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+
   return (
     <AppContext.Provider
       value={{

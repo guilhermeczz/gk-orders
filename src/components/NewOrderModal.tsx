@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useAppStore } from '@/lib/store';
-import type { OrderItem, Product, Mesa } from '@/lib/types';
+import type { OrderItem, OrderItemAddition, Product, Mesa } from '@/lib/types';
 import { toast } from 'sonner';
 import {
   ChevronDown,
@@ -23,6 +23,7 @@ interface NewOrderModalProps {
   appendOrderId?: string | null;
   initialCustomerName?: string;
   initialCart?: Record<string, number>;
+  initialCartAdditions?: Record<string, Record<string, number>>;
   initialNotes?: string;
   appendBaseNotes?: string;
   mesaId?: string | null;
@@ -51,18 +52,22 @@ export function NewOrderModal({
   appendOrderId,
   initialCustomerName,
   initialCart,
+  initialCartAdditions,
   initialNotes,
   appendBaseNotes,
   mesaId,
   mesaNumero,
 }: NewOrderModalProps) {
-  const { products, categories, mesas, addOrder, updateOrder, appendItemsToOrder } = useAppStore();
+  const { products, categories, mesas, addOrder, updateOrder, appendItemsToOrder } =
+    useAppStore();
   const { user } = useAuth();
 
   const [customerName, setCustomerName] = useState('');
   const [notes, setNotes] = useState('');
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<Record<string, number>>({});
+  const [cartAdditions, setCartAdditions] = useState<Record<string, Record<string, number>>>({});
+  const [additionTargetProductId, setAdditionTargetProductId] = useState<string | null>(null);
   const [orderType, setOrderType] = useState<'Local' | 'Delivery' | 'Retirada' | ''>('');
   const [loading, setLoading] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
@@ -70,11 +75,10 @@ export function NewOrderModal({
   const [mesaDropdownAberto, setMesaDropdownAberto] = useState(false);
 
   const [fieldErrors, setFieldErrors] = useState<{
-  customerName?: boolean;
-  mesa?: boolean;
-  cart?: boolean;
-}>({});
-
+    customerName?: boolean;
+    mesa?: boolean;
+    cart?: boolean;
+  }>({});
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -83,7 +87,44 @@ export function NewOrderModal({
   const isMesaFlow = !!mesaId || !!mesaNumero;
   const isForcedPickup = forceOrderType === 'Retirada';
   const isTopAvulsoFlow = !isAppending && !isEditing && !isMesaFlow && !isForcedPickup;
- 
+
+  const normalizeText = (value: string) => {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+  };
+
+  const getCategoryNameByProductId = (productId: string | number) => {
+    const product = products.find((p: Product) => String(p.id) === String(productId));
+    const category = categories.find((c: any) => String(c.id) === String(product?.categoryId));
+
+    return String(category?.name || '');
+  };
+
+  const isAdditionalProduct = (productId: string | number) => {
+    return normalizeText(getCategoryNameByProductId(productId)) === 'adicionais';
+  };
+
+  const productAcceptsAdditions = (productId: string | number) => {
+    const categoryName = normalizeText(getCategoryNameByProductId(productId));
+
+    const allowedCategories = [
+      'lanches de hamburguer',
+      'lanches de frango',
+      'lanches de calabresa',
+      'lanches leves',
+      'lanches especiais',
+      'hot dog',
+    ];
+
+    return allowedCategories.includes(categoryName);
+  };
+
+  const getProductById = (productId: string | number) => {
+    return products.find((p: Product) => String(p.id) === String(productId)) ?? null;
+  };
 
   const mesasDisponiveis = useMemo(() => {
     return (mesas ?? [])
@@ -103,14 +144,12 @@ export function NewOrderModal({
     return null;
   }, [mesaId, mesasDisponiveis, selectedMesaId]);
 
-   const shouldShowTypeStep = !isMesaFlow && !selectedMesa;
+  const shouldShowTypeStep = !isMesaFlow && !selectedMesa;
 
   useEffect(() => {
     if (!open) return;
 
-    const fallbackCustomer =
-      initialCustomerName ??
-      (mesaNumero ? `Mesa ${mesaNumero}` : '');
+    const fallbackCustomer = initialCustomerName ?? (mesaNumero ? `Mesa ${mesaNumero}` : '');
 
     setCustomerName(fallbackCustomer);
 
@@ -123,9 +162,13 @@ export function NewOrderModal({
     else if (sourceNotes.includes('[RETIRADA]')) parsedType = 'Retirada';
 
     if (!appendOrderId) {
-      if (parsedNotes.includes('[LOCAL]')) parsedNotes = parsedNotes.replace('[LOCAL]', '').trim();
-      else if (parsedNotes.includes('[DELIVERY]')) parsedNotes = parsedNotes.replace('[DELIVERY]', '').trim();
-      else if (parsedNotes.includes('[RETIRADA]')) parsedNotes = parsedNotes.replace('[RETIRADA]', '').trim();
+      if (parsedNotes.includes('[LOCAL]')) {
+        parsedNotes = parsedNotes.replace('[LOCAL]', '').trim();
+      } else if (parsedNotes.includes('[DELIVERY]')) {
+        parsedNotes = parsedNotes.replace('[DELIVERY]', '').trim();
+      } else if (parsedNotes.includes('[RETIRADA]')) {
+        parsedNotes = parsedNotes.replace('[RETIRADA]', '').trim();
+      }
     }
 
     if (forceOrderType) {
@@ -137,6 +180,8 @@ export function NewOrderModal({
     setNotes(parsedNotes);
     setOrderType(parsedType);
     setCart(appendOrderId ? {} : initialCart ?? {});
+    setCartAdditions(appendOrderId ? {} : initialCartAdditions ?? {});
+    setAdditionTargetProductId(null);
     setSearch('');
     setShowSummary(false);
     setMesaDropdownAberto(false);
@@ -153,6 +198,7 @@ export function NewOrderModal({
     appendOrderId,
     initialCustomerName,
     initialCart,
+    initialCartAdditions,
     initialNotes,
     appendBaseNotes,
     mesaNumero,
@@ -188,13 +234,19 @@ export function NewOrderModal({
 
       return (
         p.active !== false &&
-        (
-          String(p.name || '').toLowerCase().includes(q) ||
-          categoryName.includes(q)
-        )
+        (String(p.name || '').toLowerCase().includes(q) || categoryName.includes(q))
       );
     });
   }, [products, categories, search]);
+
+  const additionalProducts = useMemo(() => {
+    return products
+      .filter((p: Product) => p.active !== false && isAdditionalProduct(p.id))
+      .sort((a, b) => {
+        if (a.price !== b.price) return a.price - b.price;
+        return a.name.localeCompare(b.name, 'pt-BR');
+      });
+  }, [products, categories]);
 
   const groupedProducts = useMemo(() => {
     const grouped = categories.reduce<Record<string, Product[]>>((acc, category: any) => {
@@ -202,6 +254,7 @@ export function NewOrderModal({
 
       const items = filteredProducts
         .filter((p) => String(p.categoryId) === String(category.id))
+        .filter((p) => !isAdditionalProduct(p.id))
         .sort((a, b) => {
           if (a.price !== b.price) return a.price - b.price;
           return a.name.localeCompare(b.name, 'pt-BR');
@@ -225,15 +278,7 @@ export function NewOrderModal({
     return [...orderedCategoryNames, ...extraCategoryNames].map(
       (categoryName) => [categoryName, grouped[categoryName]] as const
     );
-  }, [categories, filteredProducts]);
-
-  const total = useMemo(() => {
-    return Object.entries(cart).reduce((sum, [id, qty]) => {
-      const p = products.find((prod: any) => String(prod.id) === String(id));
-      if (!p) return sum;
-      return sum + Number(p.price || 0) * qty;
-    }, 0);
-  }, [cart, products]);
+  }, [categories, filteredProducts, products]);
 
   const cartItems = useMemo(() => {
     return Object.entries(cart)
@@ -241,15 +286,48 @@ export function NewOrderModal({
         const p = products.find((prod: any) => String(prod.id) === String(id));
         if (!p) return null;
 
+        const additionsMap = cartAdditions[id] ?? {};
+
+        const additions = Object.entries(additionsMap)
+          .map(([additionId, additionQty]) => {
+            const additionProduct = products.find(
+              (prod: any) => String(prod.id) === String(additionId)
+            );
+
+            if (!additionProduct || additionQty <= 0) return null;
+
+            return {
+              productId: String(additionId),
+              productName: additionProduct.name,
+              quantity: Number(additionQty),
+              unitPrice: Number(additionProduct.price || 0),
+            };
+          })
+          .filter(Boolean) as OrderItemAddition[];
+
         return {
           productId: String(id),
           productName: p.name,
           quantity,
           unitPrice: Number(p.price || 0),
+          additions,
         };
       })
       .filter(Boolean) as OrderItem[];
-  }, [cart, products]);
+  }, [cart, cartAdditions, products]);
+
+  const total = useMemo(() => {
+    return cartItems.reduce((sum, item) => {
+      const baseTotal = Number(item.quantity || 0) * Number(item.unitPrice || 0);
+      const additionsTotal = (item.additions ?? []).reduce(
+        (acc, addition) =>
+          acc + Number(addition.quantity || 0) * Number(addition.unitPrice || 0),
+        0
+      );
+
+      return sum + baseTotal + additionsTotal;
+    }, 0);
+  }, [cartItems]);
 
   const updateQty = (productId: string | number, delta: number) => {
     const safeId = String(productId);
@@ -259,12 +337,55 @@ export function NewOrderModal({
 
       if (next <= 0) {
         const { [safeId]: _, ...rest } = prev;
+
+        setCartAdditions((current) => {
+          const { [safeId]: __, ...remaining } = current;
+          return remaining;
+        });
+
         return rest;
       }
 
       return { ...prev, [safeId]: next };
     });
   };
+
+  const updateAdditionQty = (
+    targetProductId: string,
+    additionProductId: string,
+    delta: number
+  ) => {
+    setCartAdditions((prev) => {
+      const currentTarget = prev[targetProductId] ?? {};
+      const nextQty = Number(currentTarget[additionProductId] || 0) + delta;
+
+      if (nextQty <= 0) {
+        const { [additionProductId]: _, ...remainingAdditions } = currentTarget;
+
+        if (Object.keys(remainingAdditions).length === 0) {
+          const { [targetProductId]: __, ...remainingTargets } = prev;
+          return remainingTargets;
+        }
+
+        return {
+          ...prev,
+          [targetProductId]: remainingAdditions,
+        };
+      }
+
+      return {
+        ...prev,
+        [targetProductId]: {
+          ...currentTarget,
+          [additionProductId]: nextQty,
+        },
+      };
+    });
+  };
+
+  const additionTargetProduct = additionTargetProductId
+    ? getProductById(additionTargetProductId)
+    : null;
 
   const handleConfirm = async () => {
     if (isTopAvulsoFlow && !selectedMesa) {
@@ -273,14 +394,14 @@ export function NewOrderModal({
     }
 
     if (isForcedPickup && !customerName.trim()) {
-  toast.error('Informe o nome do cliente para retirada.');
-  return;
-}
+      toast.error('Informe o nome do cliente para retirada.');
+      return;
+    }
 
-if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) {
-  toast.error('Informe o nome do cliente ou mesa.');
-  return;
-}
+    if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) {
+      toast.error('Informe o nome do cliente ou mesa.');
+      return;
+    }
 
     if (cartItems.length === 0) {
       toast.error('O carrinho está vazio.');
@@ -345,16 +466,6 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
           ? 'Novo Pedido de Retirada'
           : 'Montar Novo Pedido';
 
-  const canProceed =
-  cartItems.length > 0 &&
-  (!isForcedPickup || customerName.trim().length > 0) &&
-  (
-    isAppending ||
-    isEditing ||
-    isMesaFlow ||
-    isForcedPickup ||
-    !!selectedMesa
-  );
   return (
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 sm:p-6 animate-fade-in">
       <div className="w-full max-w-5xl h-full max-h-[90vh] bg-background rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-slide-up border border-border/50">
@@ -467,23 +578,46 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
                 </h3>
 
                 <div className="space-y-2.5">
-                  {cartItems.map((item, i) => (
-                    <div
-                      key={`${item.productId}-${i}`}
-                      className="flex justify-between items-center p-4 bg-background border border-border/40 rounded-2xl hover:border-primary/30 transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <span className="font-black text-primary bg-primary/10 px-2 py-1 rounded-lg min-w-[36px] text-center">
-                          {item.quantity}x
-                        </span>
-                        <span className="font-semibold text-[15px]">{item.productName}</span>
-                      </div>
+                  {cartItems.map((item, i) => {
+                    const additionsTotal = (item.additions ?? []).reduce(
+                      (sum, addition) => sum + addition.quantity * addition.unitPrice,
+                      0
+                    );
 
-                      <span className="font-medium text-muted-foreground">
-                        {formatMoney(item.quantity * item.unitPrice)}
-                      </span>
-                    </div>
-                  ))}
+                    return (
+                      <div
+                        key={`${item.productId}-${i}`}
+                        className="flex justify-between items-start gap-4 p-4 bg-background border border-border/40 rounded-2xl hover:border-primary/30 transition-colors"
+                      >
+                        <div className="flex-1">
+                          <div className="flex items-center gap-3">
+                            <span className="font-black text-primary bg-primary/10 px-2 py-1 rounded-lg min-w-[36px] text-center">
+                              {item.quantity}x
+                            </span>
+                            <span className="font-semibold text-[15px]">{item.productName}</span>
+                          </div>
+
+                          {(item.additions ?? []).length > 0 && (
+                            <div className="ml-12 mt-2 space-y-1">
+                              {(item.additions ?? []).map((addition) => (
+                                <div
+                                  key={`${item.productId}-${addition.productId}`}
+                                  className="text-xs font-bold text-muted-foreground"
+                                >
+                                  + {addition.quantity}x {addition.productName} —{' '}
+                                  {formatMoney(addition.quantity * addition.unitPrice)}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        <span className="font-medium text-muted-foreground whitespace-nowrap">
+                          {formatMoney(item.quantity * item.unitPrice + additionsTotal)}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -529,12 +663,12 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
                               text-white
                               shadow-[0_0_28px_rgba(255,106,0,0.08)]
                               ${
-  fieldErrors.mesa
-    ? 'border-red-500 ring-4 ring-red-500/10 shadow-[0_0_30px_rgba(239,68,68,0.18)]'
-    : mesaDropdownAberto
-      ? 'border-primary ring-4 ring-primary/10 shadow-[0_0_34px_rgba(255,106,0,0.18)]'
-      : 'border-border/60 hover:border-primary/60 hover:shadow-[0_0_30px_rgba(255,106,0,0.12)]'
-}
+                                fieldErrors.mesa
+                                  ? 'border-red-500 ring-4 ring-red-500/10 shadow-[0_0_30px_rgba(239,68,68,0.18)]'
+                                  : mesaDropdownAberto
+                                    ? 'border-primary ring-4 ring-primary/10 shadow-[0_0_34px_rgba(255,106,0,0.18)]'
+                                    : 'border-border/60 hover:border-primary/60 hover:shadow-[0_0_30px_rgba(255,106,0,0.12)]'
+                              }
                             `}
                           >
                             <span
@@ -555,31 +689,14 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
                           </button>
 
                           {mesaDropdownAberto && (
-                            <div
-                              className="
-                                absolute left-0 right-0 top-[66px] z-[9999]
-                                overflow-hidden
-                                rounded-2xl
-                                border border-primary/80
-                                bg-[#101010]
-                                shadow-[0_20px_55px_rgba(0,0,0,0.78),0_0_34px_rgba(255,106,0,0.20)]
-                              "
-                            >
+                            <div className="absolute left-0 right-0 top-[66px] z-[9999] overflow-hidden rounded-2xl border border-primary/80 bg-[#101010] shadow-[0_20px_55px_rgba(0,0,0,0.78),0_0_34px_rgba(255,106,0,0.20)]">
                               <button
                                 type="button"
                                 onClick={() => {
                                   setSelectedMesaId('');
                                   setMesaDropdownAberto(false);
                                 }}
-                                className="
-                                  flex w-full items-center gap-3
-                                  px-5 py-4
-                                  text-left
-                                  text-primary
-                                  transition-colors
-                                  bg-primary/10
-                                  hover:bg-primary/15
-                                "
+                                className="flex w-full items-center gap-3 px-5 py-4 text-left text-primary transition-colors bg-primary/10 hover:bg-primary/15"
                               >
                                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/60 text-primary">
                                   <Store className="h-4 w-4" />
@@ -597,32 +714,20 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
                                     key={mesa.id}
                                     type="button"
                                     onClick={() => {
-                                    setSelectedMesaId(String(mesa.id));
-                                    setMesaDropdownAberto(false);
-                                    setFieldErrors((prev) => ({ ...prev, mesa: false }));
+                                      setSelectedMesaId(String(mesa.id));
+                                      setMesaDropdownAberto(false);
+                                      setFieldErrors((prev) => ({ ...prev, mesa: false }));
                                     }}
-
-                                    
-                                    className={`
-                                      flex w-full items-center gap-3
-                                      px-5 py-4
-                                      text-left
-                                      transition-colors
-                                      hover:bg-white/[0.06]
-                                      ${mesaAtiva ? 'bg-primary/15 text-primary' : 'text-white'}
-                                    `}
-                                    
+                                    className={`flex w-full items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-white/[0.06] ${
+                                      mesaAtiva ? 'bg-primary/15 text-primary' : 'text-white'
+                                    }`}
                                   >
                                     <span
-                                      className={`
-                                        flex h-8 w-8 shrink-0 items-center justify-center
-                                        rounded-lg border
-                                        ${
-                                          mesaAtiva
-                                            ? 'border-primary/80 text-primary'
-                                            : 'border-white/25 text-zinc-400'
-                                        }
-                                      `}
+                                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${
+                                        mesaAtiva
+                                          ? 'border-primary/80 text-primary'
+                                          : 'border-white/25 text-zinc-400'
+                                      }`}
                                     >
                                       <Store className="h-4 w-4" />
                                     </span>
@@ -635,42 +740,44 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
                               })}
                             </div>
                           )}
+
                           {fieldErrors.mesa && (
-  <p className="mt-2 text-xs font-bold text-red-500">
-    Selecione uma mesa antes de avançar.
-  </p>
-)}
+                            <p className="mt-2 text-xs font-bold text-red-500">
+                              Selecione uma mesa antes de avançar.
+                            </p>
+                          )}
                         </div>
                       ) : (
                         <input
-  value={customerName}
-  onChange={(e) => {
-    setCustomerName(e.target.value);
+                          value={customerName}
+                          onChange={(e) => {
+                            setCustomerName(e.target.value);
 
-    if (fieldErrors.customerName && e.target.value.trim()) {
-      setFieldErrors((prev) => ({ ...prev, customerName: false }));
-    }
-  }}
-  disabled={!!mesaNumero}
-  placeholder={
-    isForcedPickup
-      ? 'Nome do cliente da retirada...'
-      : mesaNumero
-        ? `Mesa ${mesaNumero}`
-        : 'Nome ou mesa...'
-  }
-  className={`w-full bg-white text-black placeholder:text-gray-400 border rounded-2xl px-5 py-4 outline-none transition-all font-medium text-[15px] disabled:opacity-70 ${
-    fieldErrors.customerName
-      ? 'border-red-500 ring-4 ring-red-500/10 focus:border-red-500'
-      : 'border-border/60 focus:border-primary focus:ring-4 focus:ring-primary/10'
-  }`}
-/>
+                            if (fieldErrors.customerName && e.target.value.trim()) {
+                              setFieldErrors((prev) => ({ ...prev, customerName: false }));
+                            }
+                          }}
+                          disabled={!!mesaNumero}
+                          placeholder={
+                            isForcedPickup
+                              ? 'Nome do cliente da retirada...'
+                              : mesaNumero
+                                ? `Mesa ${mesaNumero}`
+                                : 'Nome ou mesa...'
+                          }
+                          className={`w-full bg-white text-black placeholder:text-gray-400 border rounded-2xl px-5 py-4 outline-none transition-all font-medium text-[15px] disabled:opacity-70 ${
+                            fieldErrors.customerName
+                              ? 'border-red-500 ring-4 ring-red-500/10 focus:border-red-500'
+                              : 'border-border/60 focus:border-primary focus:ring-4 focus:ring-primary/10'
+                          }`}
+                        />
                       )}
+
                       {fieldErrors.customerName && (
-  <p className="mt-2 text-xs font-bold text-red-500">
-    O nome do cliente é obrigatório para retirada.
-  </p>
-)}
+                        <p className="mt-2 text-xs font-bold text-red-500">
+                          O nome do cliente é obrigatório para retirada.
+                        </p>
+                      )}
 
                       {isTopAvulsoFlow && selectedMesa && (
                         <p className="mt-2 text-xs text-muted-foreground">
@@ -679,10 +786,10 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
                       )}
 
                       {isForcedPickup && (
-  <p className="mt-2 text-xs text-muted-foreground">
-    Informe o nome do cliente para identificar a retirada.
-  </p>
-)}
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Informe o nome do cliente para identificar a retirada.
+                        </p>
+                      )}
                     </div>
 
                     <div>
@@ -719,6 +826,12 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
                             const qty = cart[safeId] || 0;
                             const pName = p.name;
                             const pPrice = Number(p.price || 0);
+                            const additionsCount = cartAdditions[safeId]
+                              ? Object.values(cartAdditions[safeId]).reduce(
+                                  (sum, value) => sum + Number(value || 0),
+                                  0
+                                )
+                              : 0;
 
                             return (
                               <div
@@ -729,9 +842,25 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
                                   <span className="font-semibold text-[15px] leading-tight text-foreground group-hover:text-primary transition-colors">
                                     {pName}
                                   </span>
+
                                   <span className="text-[13px] font-medium text-muted-foreground">
                                     {formatMoney(pPrice)}
                                   </span>
+
+                                  {qty > 0 &&
+                                    additionalProducts.length > 0 &&
+                                    productAcceptsAdditions(safeId) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setAdditionTargetProductId(safeId)}
+                                        className="mt-2 w-fit rounded-lg border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-black text-primary"
+                                      >
+                                        Adicionais
+                                        {additionsCount > 0 && (
+                                          <span className="ml-1">({additionsCount})</span>
+                                        )}
+                                      </button>
+                                    )}
                                 </div>
 
                                 <div className="flex items-center gap-3 bg-background border border-border/40 p-1.5 rounded-2xl shadow-sm">
@@ -781,48 +910,48 @@ if (!isForcedPickup && !isMesaFlow && !isTopAvulsoFlow && !customerName.trim()) 
         <div className="p-4 sm:p-6 border-t border-border/50 bg-card/80 backdrop-blur-md z-10">
           {!showSummary ? (
             <button
-onClick={() => {
-  const nextErrors: {
-    customerName?: boolean;
-    mesa?: boolean;
-    cart?: boolean;
-  } = {};
+              onClick={() => {
+                const nextErrors: {
+                  customerName?: boolean;
+                  mesa?: boolean;
+                  cart?: boolean;
+                } = {};
 
-  if (isTopAvulsoFlow && !selectedMesa) {
-    nextErrors.mesa = true;
-  }
+                if (isTopAvulsoFlow && !selectedMesa) {
+                  nextErrors.mesa = true;
+                }
 
-  if (isForcedPickup && !customerName.trim()) {
-    nextErrors.customerName = true;
-  }
+                if (isForcedPickup && !customerName.trim()) {
+                  nextErrors.customerName = true;
+                }
 
-  if (cartItems.length === 0) {
-    nextErrors.cart = true;
-  }
+                if (cartItems.length === 0) {
+                  nextErrors.cart = true;
+                }
 
-  if (Object.keys(nextErrors).length > 0) {
-    setFieldErrors(nextErrors);
+                if (Object.keys(nextErrors).length > 0) {
+                  setFieldErrors(nextErrors);
 
-    if (nextErrors.customerName) {
-      toast.error('Informe o nome do cliente para retirada.');
-      return;
-    }
+                  if (nextErrors.customerName) {
+                    toast.error('Informe o nome do cliente para retirada.');
+                    return;
+                  }
 
-    if (nextErrors.mesa) {
-      toast.error('Selecione uma mesa criada para abrir o pedido.');
-      return;
-    }
+                  if (nextErrors.mesa) {
+                    toast.error('Selecione uma mesa criada para abrir o pedido.');
+                    return;
+                  }
 
-    if (nextErrors.cart) {
-      toast.error('Adicione pelo menos um item ao pedido.');
-      return;
-    }
-  }
+                  if (nextErrors.cart) {
+                    toast.error('Adicione pelo menos um item ao pedido.');
+                    return;
+                  }
+                }
 
-  setFieldErrors({});
-  setShowSummary(true);
-}}              
-disabled={cartItems.length === 0}
+                setFieldErrors({});
+                setShowSummary(true);
+              }}
+              disabled={cartItems.length === 0}
               className="w-full py-4 sm:py-5 bg-primary text-primary-foreground font-black rounded-2xl text-[17px] sm:text-lg shadow-lg hover:shadow-[0_8px_25px_rgba(255,106,0,0.3)] transition-all duration-300 hover:-translate-y-1 active:scale-95 flex justify-between px-6 sm:px-8 items-center disabled:opacity-50 disabled:hover:translate-y-0"
               type="button"
             >
@@ -852,6 +981,102 @@ disabled={cartItems.length === 0}
           )}
         </div>
       </div>
+
+      {additionTargetProductId && additionTargetProduct && (
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/85 p-4">
+          <div className="w-full max-w-lg rounded-3xl border border-gray-800 bg-[#111] text-white shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-gray-800 p-5">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-primary">
+                  Adicionais do lanche
+                </p>
+                <h3 className="text-xl font-black mt-1">
+                  {additionTargetProduct.name}
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setAdditionTargetProductId(null)}
+                className="rounded-xl p-2 text-gray-400 hover:bg-gray-800 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="max-h-[55vh] overflow-y-auto p-5 space-y-3">
+              {additionalProducts.length === 0 ? (
+                <p className="rounded-2xl border border-dashed border-gray-700 p-6 text-center text-sm text-gray-400">
+                  Nenhum adicional cadastrado na categoria Adicionais.
+                </p>
+              ) : (
+                additionalProducts.map((addition) => {
+                  const currentQty =
+                    cartAdditions[additionTargetProductId]?.[String(addition.id)] || 0;
+
+                  return (
+                    <div
+                      key={addition.id}
+                      className="flex items-center justify-between gap-4 rounded-2xl border border-gray-800 bg-black/30 p-4"
+                    >
+                      <div>
+                        <p className="font-black">{addition.name}</p>
+                        <p className="text-sm text-gray-400">
+                          {formatMoney(Number(addition.price || 0))}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-3 rounded-2xl border border-gray-800 bg-[#151515] p-1.5">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateAdditionQty(
+                              additionTargetProductId,
+                              String(addition.id),
+                              -1
+                            )
+                          }
+                          className="flex h-8 w-8 items-center justify-center rounded-xl bg-gray-800 hover:text-red-400"
+                        >
+                          <Minus className="w-4 h-4" />
+                        </button>
+
+                        <span className="w-6 text-center font-black">
+                          {currentQty}
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            updateAdditionQty(
+                              additionTargetProductId,
+                              String(addition.id),
+                              1
+                            )
+                          }
+                          className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-primary-foreground"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="border-t border-gray-800 p-5">
+              <button
+                type="button"
+                onClick={() => setAdditionTargetProductId(null)}
+                className="w-full rounded-2xl bg-primary py-4 font-black text-primary-foreground"
+              >
+                Confirmar adicionais
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

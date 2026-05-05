@@ -35,6 +35,21 @@ const processarNota = (notes: string) => {
   return { tipo, textoObs };
 };
 
+function getItemAdditionsTotal(item: OrderItem) {
+  return (item.additions ?? []).reduce(
+    (sum, addition) =>
+      sum + Number(addition.quantity || 0) * Number(addition.unitPrice || 0),
+    0
+  );
+}
+
+function getItemTotal(item: OrderItem) {
+  return (
+    Number(item.quantity || 0) * Number(item.unitPrice || 0) +
+    getItemAdditionsTotal(item)
+  );
+}
+
 function orderItemsToCart(order: Order) {
   return (order.items ?? []).reduce<Record<string, number>>((acc, item) => {
     if (item.productId) {
@@ -44,6 +59,29 @@ function orderItemsToCart(order: Order) {
 
     return acc;
   }, {});
+}
+
+function orderItemsToCartAdditions(order: Order) {
+  return (order.items ?? []).reduce<Record<string, Record<string, number>>>(
+    (acc, item) => {
+      if (!item.productId || !Array.isArray(item.additions)) return acc;
+
+      const productId = String(item.productId);
+
+      item.additions.forEach((addition) => {
+        if (!addition.productId) return;
+
+        if (!acc[productId]) acc[productId] = {};
+
+        acc[productId][String(addition.productId)] =
+          (acc[productId][String(addition.productId)] || 0) +
+          Number(addition.quantity || 0);
+      });
+
+      return acc;
+    },
+    {}
+  );
 }
 
 export function MesaDashboard() {
@@ -580,6 +618,7 @@ export function MesaDashboard() {
           editOrderId={editRetiradaTarget.id}
           initialCustomerName={editRetiradaTarget.customerName}
           initialCart={orderItemsToCart(editRetiradaTarget)}
+          initialCartAdditions={orderItemsToCartAdditions(editRetiradaTarget)}
           initialNotes={editRetiradaTarget.notes}
           forceOrderType="Retirada"
           hideOrderTypeSelector
@@ -1442,19 +1481,38 @@ function RetiradaCard({
               </p>
             </div>
 
-            <div className="space-y-1">
-              {batch.items.map((item, idx) => (
-                <div key={`${batch.id}-${idx}`} className="flex justify-between text-sm">
-                  <span>
-                    <span className="font-black text-primary mr-1">
-                      {item.quantity}x
-                    </span>
-                    {item.productName}
-                  </span>
+            <div className="space-y-2">
+              {batch.items.map((item, idx) => {
+                const additionsTotal = getItemAdditionsTotal(item);
 
-                  <span>{formatMoney(item.quantity * item.unitPrice)}</span>
-                </div>
-              ))}
+                return (
+                  <div key={`${batch.id}-${idx}`} className="space-y-1">
+                    <div className="flex justify-between text-sm gap-3">
+                      <span>
+                        <span className="font-black text-primary mr-1">
+                          {item.quantity}x
+                        </span>
+                        {item.productName}
+                      </span>
+
+                      <span>{formatMoney(item.quantity * item.unitPrice + additionsTotal)}</span>
+                    </div>
+
+                    {(item.additions ?? []).length > 0 && (
+                      <div className="ml-5 space-y-0.5">
+                        {(item.additions ?? []).map((addition) => (
+                          <div
+                            key={`${item.productId}-${addition.productId}`}
+                            className="text-[11px] font-bold text-muted-foreground"
+                          >
+                            + {addition.quantity}x {addition.productName}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}
@@ -1645,41 +1703,60 @@ function MesaDetailsModal({
                           </div>
 
                           <div className="space-y-2">
-                            {batch.items.map((item: OrderItem, idx: number) => (
-                              <div
-                                key={`${batch.id}-${idx}-${item.id ?? item.productId}`}
-                                className="flex items-center justify-between gap-4 rounded-lg border border-gray-800 bg-[#121212] px-3 py-2 text-sm"
-                              >
-                                <div className="flex-1">
-                                  <span className="mr-1 font-black text-primary">
-                                    {item.quantity}x
-                                  </span>
-                                  {item.productName}
+                            {batch.items.map((item: OrderItem, idx: number) => {
+                              const itemTotal = getItemTotal(item);
+
+                              return (
+                                <div
+                                  key={`${batch.id}-${idx}-${item.id ?? item.productId}`}
+                                  className="flex items-center justify-between gap-4 rounded-lg border border-gray-800 bg-[#121212] px-3 py-2 text-sm"
+                                >
+                                  <div className="flex-1">
+                                    <div>
+                                      <span className="mr-1 font-black text-primary">
+                                        {item.quantity}x
+                                      </span>
+                                      {item.productName}
+                                    </div>
+
+                                    {(item.additions ?? []).length > 0 && (
+                                      <div className="ml-5 mt-1 space-y-0.5">
+                                        {(item.additions ?? []).map((addition) => (
+                                          <div
+                                            key={`${item.productId}-${addition.productId}`}
+                                            className="text-[11px] font-bold text-gray-400"
+                                          >
+                                            + {addition.quantity}x {addition.productName}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <div className="flex items-center gap-3">
+                                    <span className="font-bold min-w-[80px] text-right">
+                                      {formatMoney(itemTotal)}
+                                    </span>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => onEditItem(order, item)}
+                                      className="rounded-md border border-blue-500/30 bg-blue-500/10 p-2 text-blue-400"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => onDeleteItem(order, item)}
+                                      className="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-red-400"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </div>
                                 </div>
-
-                                <div className="flex items-center gap-3">
-                                  <span className="font-bold min-w-[80px] text-right">
-                                    {formatMoney(item.quantity * item.unitPrice)}
-                                  </span>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => onEditItem(order, item)}
-                                    className="rounded-md border border-blue-500/30 bg-blue-500/10 p-2 text-blue-400"
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    onClick={() => onDeleteItem(order, item)}
-                                    className="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-red-400"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
 
                           {obs && (

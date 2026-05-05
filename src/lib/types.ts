@@ -1,6 +1,13 @@
 export type OrderStatus = 'new' | 'preparing' | 'ready' | 'paid';
 export type PaymentMethod = 'dinheiro' | 'pix' | 'credito' | 'debito';
 
+export interface OrderItemAddition {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPrice: number;
+}
+
 export interface OrderItem {
   id?: string;
   productId: string;
@@ -10,6 +17,7 @@ export interface OrderItem {
   batchId?: string;
   batchNotes?: string;
   createdAt?: string | Date;
+  additions?: OrderItemAddition[];
 }
 
 export interface OrderBatch {
@@ -60,6 +68,7 @@ export interface User {
   username: string;
   active?: boolean;
 }
+
 export interface Mesa {
   id: string;
   numero: number;
