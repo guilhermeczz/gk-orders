@@ -1589,14 +1589,19 @@ function MesaDetailsModal({
   }, 0);
 
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/90 p-4 print:hidden">
-<div className="w-full max-w-4xl max-h-[92vh] overflow-hidden rounded-3xl border border-gray-800 bg-[#111] text-white shadow-2xl flex flex-col">        <div className="flex items-center justify-between border-b border-gray-800 p-6">
+    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/90 p-2 sm:p-4 print:hidden">
+      <div className="flex w-full max-w-4xl max-h-[94dvh] sm:max-h-[92vh] flex-col overflow-hidden rounded-3xl border border-gray-800 bg-[#111] text-white shadow-2xl">
+        <div className="shrink-0 flex items-center justify-between border-b border-gray-800 p-3 sm:p-6">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
+            <p className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-gray-400">
               Detalhes da Mesa
             </p>
-            <h3 className="mt-1 text-3xl font-black">Mesa {mesa.numero}</h3>
-            <p className="mt-1 text-sm text-gray-400">
+
+            <h3 className="mt-0.5 sm:mt-1 text-2xl sm:text-3xl font-black">
+              Mesa {mesa.numero}
+            </h3>
+
+            <p className="mt-0.5 sm:mt-1 text-xs sm:text-sm text-gray-400">
               Garçom:{' '}
               <span className="font-bold text-white">
                 {mesa.garcomNome || 'Não definido'}
@@ -1613,8 +1618,8 @@ function MesaDetailsModal({
           </button>
         </div>
 
-        <div className="border-b border-gray-800 p-6">
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="shrink-0 border-b border-gray-800 p-3 sm:p-6">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
             <InfoCard
               label="Status"
               value={isOccupied ? 'Ocupada' : 'Livre'}
@@ -1626,8 +1631,8 @@ function MesaDetailsModal({
           </div>
         </div>
 
-<div className="flex-1 overflow-y-auto p-4 sm:p-6">
-            {!isOccupied ? (
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6">
+          {!isOccupied ? (
             <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-8 text-center">
               <UtensilsCrossed className="mx-auto mb-3 h-10 w-10 text-gray-500" />
               <p className="text-lg font-bold">Mesa livre</p>
@@ -1644,18 +1649,19 @@ function MesaDetailsModal({
               </button>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3 sm:space-y-4">
               {orders.map((order: Order) => (
                 <div
                   key={order.id}
-                  className="rounded-2xl border border-gray-800 bg-gray-900/60 p-4"
+                  className="rounded-2xl border border-gray-800 bg-gray-900/60 p-3 sm:p-4"
                 >
-                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div className="mb-3 sm:mb-4 flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
                         Pedido #{String(order.number).padStart(4, '0')}
                       </p>
-                      <p className="mt-1 text-lg font-black">
+
+                      <p className="mt-1 text-base sm:text-lg font-black">
                         {order.customerName || `Mesa ${mesa.numero}`}
                       </p>
 
@@ -1703,82 +1709,75 @@ function MesaDetailsModal({
 
                           <div className="space-y-2">
                             {batch.items.map((item: OrderItem, idx: number) => {
-  const itemAdditions = item.additions ?? [];
-  const additionsTotal = itemAdditions.reduce(
-    (sum, addition) =>
-      sum + Number(addition.quantity || 0) * Number(addition.unitPrice || 0),
-    0
-  );
+                              const itemAdditions = item.additions ?? [];
+                              const itemTotal = getItemTotal(item);
 
-  const itemTotal =
-    Number(item.quantity || 0) * Number(item.unitPrice || 0) + additionsTotal;
+                              return (
+                                <div
+                                  key={`${batch.id}-${idx}-${item.id ?? item.productId}`}
+                                  className="rounded-2xl border border-gray-800 bg-[#121212] p-3 text-sm"
+                                >
+                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-start gap-2">
+                                        <span className="shrink-0 font-black text-primary">
+                                          {item.quantity}x
+                                        </span>
 
-  return (
-    <div
-      key={`${batch.id}-${idx}-${item.id ?? item.productId}`}
-      className="rounded-2xl border border-gray-800 bg-[#121212] p-3 text-sm"
-    >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start gap-2">
-            <span className="shrink-0 font-black text-primary">
-              {item.quantity}x
-            </span>
+                                        <div className="min-w-0">
+                                          <p className="break-words font-bold leading-snug text-white">
+                                            {item.productName}
+                                          </p>
 
-            <div className="min-w-0">
-              <p className="break-words font-bold leading-snug text-white">
-                {item.productName}
-              </p>
+                                          {itemAdditions.length > 0 && (
+                                            <div className="mt-2 space-y-1 rounded-xl border border-gray-800 bg-black/25 p-2">
+                                              {itemAdditions.map((addition) => (
+                                                <p
+                                                  key={`${item.id ?? item.productId}-${addition.productId}`}
+                                                  className="text-xs font-bold leading-relaxed text-gray-300"
+                                                >
+                                                  <span className="text-primary">+</span>{' '}
+                                                  {addition.quantity}x {addition.productName}
+                                                  <span className="ml-1 text-gray-500">
+                                                    ({formatMoney(addition.quantity * addition.unitPrice)})
+                                                  </span>
+                                                </p>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
 
-              {itemAdditions.length > 0 && (
-                <div className="mt-2 space-y-1 rounded-xl border border-gray-800 bg-black/25 p-2">
-                  {itemAdditions.map((addition) => (
-                    <p
-                      key={`${item.id ?? item.productId}-${addition.productId}`}
-                      className="text-xs font-bold leading-relaxed text-gray-300"
-                    >
-                      <span className="text-primary">+</span>{' '}
-                      {addition.quantity}x {addition.productName}
-                      <span className="ml-1 text-gray-500">
-                        ({formatMoney(addition.quantity * addition.unitPrice)})
-                      </span>
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+                                    <div className="flex items-center justify-between gap-3 sm:justify-end">
+                                      <span className="shrink-0 rounded-xl border border-gray-800 bg-black/30 px-3 py-2 text-base font-black text-white">
+                                        {formatMoney(itemTotal)}
+                                      </span>
 
-        <div className="flex items-center justify-between gap-3 sm:justify-end">
-          <span className="shrink-0 rounded-xl border border-gray-800 bg-black/30 px-3 py-2 text-base font-black text-white">
-            {formatMoney(itemTotal)}
-          </span>
+                                      <div className="flex shrink-0 gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => onEditItem(order, item)}
+                                          className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 transition-all active:scale-95"
+                                          title="Editar item"
+                                        >
+                                          <Pencil className="h-5 w-5" />
+                                        </button>
 
-          <div className="flex shrink-0 gap-2">
-            <button
-              type="button"
-              onClick={() => onEditItem(order, item)}
-              className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 transition-all active:scale-95"
-              title="Editar item"
-            >
-              <Pencil className="h-5 w-5" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onDeleteItem(order, item)}
-              className="flex h-11 w-11 items-center justify-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 transition-all active:scale-95"
-              title="Excluir item"
-            >
-              <Trash2 className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-})}
+                                        <button
+                                          type="button"
+                                          onClick={() => onDeleteItem(order, item)}
+                                          className="flex h-11 w-11 items-center justify-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 transition-all active:scale-95"
+                                          title="Excluir item"
+                                        >
+                                          <Trash2 className="h-5 w-5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
 
                           {obs && (
@@ -1801,20 +1800,20 @@ function MesaDetailsModal({
           )}
         </div>
 
-        <div className="border-t border-gray-800 p-6">
+        <div className="shrink-0 border-t border-gray-800 p-3 sm:p-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="text-sm text-gray-400">Total da mesa</p>
-              <p className="text-3xl font-black">{formatMoney(total)}</p>
+              <p className="text-xs sm:text-sm text-gray-400">Total da mesa</p>
+              <p className="text-2xl sm:text-3xl font-black">{formatMoney(total)}</p>
             </div>
 
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap gap-2 sm:gap-3">
               {!isOccupied && (
                 <>
                   <button
                     type="button"
                     onClick={onOpenOrder}
-                    className="rounded-xl bg-primary px-4 py-3 font-black text-primary-foreground"
+                    className="rounded-xl bg-primary px-4 py-2.5 sm:px-4 sm:py-3 text-sm sm:text-base font-black text-primary-foreground"
                   >
                     Abrir pedido
                   </button>
@@ -1822,7 +1821,7 @@ function MesaDetailsModal({
                   <button
                     type="button"
                     onClick={onEditMesa}
-                    className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-3 font-bold text-blue-400"
+                    className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 sm:px-4 sm:py-3 text-sm sm:text-base font-bold text-blue-400"
                   >
                     Editar mesa
                   </button>
@@ -1830,7 +1829,7 @@ function MesaDetailsModal({
                   <button
                     type="button"
                     onClick={onDeleteMesa}
-                    className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 font-bold text-red-400"
+                    className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 sm:px-4 sm:py-3 text-sm sm:text-base font-bold text-red-400"
                   >
                     Excluir mesa
                   </button>
@@ -1842,7 +1841,7 @@ function MesaDetailsModal({
                   <button
                     type="button"
                     onClick={onAddItemToMesa}
-                    className="rounded-xl bg-primary px-5 py-3 font-black text-primary-foreground"
+                    className="rounded-xl bg-primary px-4 py-2.5 sm:px-5 sm:py-3 text-sm sm:text-base font-black text-primary-foreground"
                   >
                     ADICIONAR ITEM
                   </button>
@@ -1850,7 +1849,7 @@ function MesaDetailsModal({
                   <button
                     type="button"
                     onClick={onFinalize}
-                    className="rounded-xl bg-green-600 px-5 py-3 font-black text-white"
+                    className="rounded-xl bg-green-600 px-4 py-2.5 sm:px-5 sm:py-3 text-sm sm:text-base font-black text-white"
                   >
                     Finalizar pagamento
                   </button>
@@ -1883,11 +1882,13 @@ function InfoCard({
           : 'text-white';
 
   return (
-    <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-4">
-      <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
+    <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-3 sm:p-4">
+      <p className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-gray-400">
         {label}
       </p>
-      <p className={`mt-2 text-xl font-black ${highlightClass}`}>{value}</p>
+      <p className={`mt-1 sm:mt-2 text-lg sm:text-xl font-black ${highlightClass}`}>
+        {value}
+      </p>
     </div>
   );
 }

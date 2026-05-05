@@ -985,7 +985,7 @@ export function NewOrderModal({
       {additionTargetProductId && additionTargetProduct && (
         <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/85 p-4">
           <div className="w-full max-w-lg rounded-3xl border border-gray-800 bg-[#111] text-white shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between border-b border-gray-800 p-5">
+            <div className="shrink-0 flex items-center justify-between border-b border-gray-800 p-4 sm:p-6">
               <div>
                 <p className="text-xs font-black uppercase tracking-wider text-primary">
                   Adicionais do lanche
