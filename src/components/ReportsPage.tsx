@@ -204,7 +204,7 @@ export function ReportsPage() {
 
     doc.setFontSize(22);
     doc.setTextColor(255, 106, 0);
-    doc.text('GARDENS LANCHES', 14, 20);
+    doc.text('GK ORDERS', 14, 20);
 
     doc.setFontSize(14);
     doc.setTextColor(40, 40, 40);
@@ -273,7 +273,7 @@ export function ReportsPage() {
       alternateRowStyles: { fillColor: [245, 245, 245] },
     });
 
-    doc.save(`Relatorio_Gardens_${startDate}_a_${endDate}.pdf`);
+    doc.save(`Relatorio_gk_${startDate}_a_${endDate}.pdf`);
     toast.success('Download do PDF iniciado!');
   };
 

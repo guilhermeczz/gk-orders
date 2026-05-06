@@ -291,7 +291,7 @@ export function CashRegisterPage() {
 
     doc.setFontSize(22);
     doc.setTextColor(255, 106, 0);
-    doc.text('GARDENS LANCHES', 14, 20);
+    doc.text('GK ORDERS', 14, 20);
 
     doc.setFontSize(15);
     doc.setTextColor(40, 40, 40);
@@ -363,7 +363,7 @@ export function CashRegisterPage() {
       alternateRowStyles: { fillColor: [245, 245, 245] },
     });
 
-    doc.save(`Caixa_Gardens_${historyDate}.pdf`);
+    doc.save(`Caixa_gk_${historyDate}.pdf`);
     toast.success('Download do PDF de Caixa iniciado!');
   };
 

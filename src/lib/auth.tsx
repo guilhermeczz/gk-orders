@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return false;
         }
 
-        const email = `${cleanUsername}@gardens.com`;
+        const email = `${cleanUsername}@gk.com`;
 
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
@@ -138,7 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const previousUser = previousSession?.user ?? null;
 
-        const email = `${cleanUsername}@gardens.com`;
+        const email = `${cleanUsername}@gk.com`;
 
         const { data, error } = await supabase.auth.signUp({
           email,

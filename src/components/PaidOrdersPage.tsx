@@ -193,7 +193,7 @@ export function PaidOrdersPage() {
 
     doc.setFontSize(22);
     doc.setTextColor(255, 106, 0);
-    doc.text('GARDENS LANCHES', 14, 20);
+    doc.text('GK ORDERS', 14, 20);
 
     doc.setFontSize(14);
     doc.setTextColor(40, 40, 40);
@@ -266,7 +266,7 @@ export function PaidOrdersPage() {
       alternateRowStyles: { fillColor: [245, 245, 245] },
     });
 
-    doc.save(`Pedidos_Pagos_Gardens_${startDate}_a_${endDate}.pdf`);
+    doc.save(`Pedidos_Pagos_Gk_${startDate}_a_${endDate}.pdf`);
     toast.success('PDF de pedidos pagos gerado!');
   };
 
