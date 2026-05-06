@@ -9,6 +9,7 @@ import {
   LogOut,
   Wallet,
   CheckCircle2,
+  ShieldCheck,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useAuth } from '@/lib/auth';
@@ -24,11 +25,22 @@ const navItems = [
   { to: '/cash-register' as const, label: 'Controle de Caixa', icon: Wallet },
 ];
 
+const developerNavItem = {
+  to: '/developer' as const,
+  label: 'Painel do Desenvolvedor',
+  icon: ShieldCheck,
+};
+
 export function AppHeader({ onNewOrder }: { onNewOrder?: () => void }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const isDeveloper =
+  String(user?.username || '').toLowerCase() === 'dev' ||
+  String(user?.name || '').toLowerCase() === 'desenvolvedor';
+
+const menuItems = isDeveloper ? [developerNavItem, ...navItems] : navItems;
 
   const handleLogout = async () => {
     try {
@@ -103,7 +115,7 @@ export function AppHeader({ onNewOrder }: { onNewOrder?: () => void }) {
             </div>
 
             <div className="flex-1 py-4 overflow-y-auto space-y-1">
-              {navItems.map((item) => {
+              {menuItems.map((item) => {
                 const isActive = currentPath === item.to;
 
                 return (

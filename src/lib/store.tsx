@@ -18,6 +18,7 @@ import type {
   Mesa,
 } from './types';
 import { supabase } from './supabase';
+import { LOJA_ATUAL_ID } from './current-store';
 import { toast } from 'sonner';
 
 interface CashPaymentMeta {
@@ -166,6 +167,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { data: userData, error } = await supabase
       .from('usuarios')
       .select('id, nome, username')
+      .eq('loja_id', LOJA_ATUAL_ID)
       .order('nome');
 
     if (error) {
@@ -186,6 +188,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const { data, error } = await supabase
       .from('mesas')
       .select('*')
+      .eq('loja_id', LOJA_ATUAL_ID)
       .order('numero', { ascending: true });
 
     if (error) {
@@ -213,8 +216,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         { data: catData, error: catError },
         { data: prodData, error: prodError },
       ] = await Promise.all([
-        supabase.from('categorias').select('*').order('nome'),
-        supabase.from('produtos').select('*').order('nome'),
+        supabase
+          .from('categorias')
+          .select('*')
+          .eq('loja_id', LOJA_ATUAL_ID)
+          .order('nome'),
+
+        supabase
+          .from('produtos')
+          .select('*')
+          .eq('loja_id', LOJA_ATUAL_ID)
+          .order('nome'),
       ]);
 
       if (catError) {
@@ -248,6 +260,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { data: orderData, error: orderError } = await supabase
         .from('pedidos')
         .select('*, pedido_itens(*)')
+        .eq('loja_id', LOJA_ATUAL_ID)
         .order('created_at', { ascending: false });
 
       if (orderError) {
@@ -380,7 +393,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }, 150);
     };
 
-    const channelName = `gardens-operacional-realtime-${Date.now()}-${Math.random()
+    const channelName = `gk-orders-realtime-${LOJA_ATUAL_ID}-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2)}`;
 
@@ -388,21 +401,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .channel(channelName)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'pedidos' },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'pedidos',
+          filter: `loja_id=eq.${LOJA_ATUAL_ID}`,
+        },
         () => refreshNow()
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'pedido_itens' },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'pedido_itens',
+          filter: `loja_id=eq.${LOJA_ATUAL_ID}`,
+        },
         () => refreshNow()
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'mesas' },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'mesas',
+          filter: `loja_id=eq.${LOJA_ATUAL_ID}`,
+        },
         () => refreshNow()
       )
       .subscribe((status) => {
-        console.log('Realtime Gardens:', status);
+        console.log('Realtime GK Orders:', status);
 
         if (status === 'SUBSCRIBED') {
           refreshNow();
@@ -445,13 +473,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       mesaId?: string | null
     ) => {
       const total = getItemsTotal(items);
-
       const safeCreatedBy = String(createdBy || '').trim() || 'Operador';
 
       const { data: order, error } = await supabase
         .from('pedidos')
         .insert([
           {
+            loja_id: LOJA_ATUAL_ID,
             cliente_nome: customerName,
             valor_total: total,
             status: 'new',
@@ -475,12 +503,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
             garcom_nome: mesaAtual?.garcomNome ?? null,
             updated_at: new Date().toISOString(),
           })
+          .eq('loja_id', LOJA_ATUAL_ID)
           .eq('id', mesaId);
 
         if (mesaError) throw mesaError;
       }
 
       const itemsToInsert = items.map((item) => ({
+        loja_id: LOJA_ATUAL_ID,
         pedido_id: order.id,
         produto_id: item.productId,
         produto_nome: item.productName,
@@ -520,6 +550,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           valor_total: total,
           observacao: notes,
         })
+        .eq('loja_id', LOJA_ATUAL_ID)
         .eq('id', orderId);
 
       if (orderError) throw orderError;
@@ -527,11 +558,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { error: deleteError } = await supabase
         .from('pedido_itens')
         .delete()
+        .eq('loja_id', LOJA_ATUAL_ID)
         .eq('pedido_id', orderId);
 
       if (deleteError) throw deleteError;
 
       const itemsToInsert = items.map((item) => ({
+        loja_id: LOJA_ATUAL_ID,
         pedido_id: orderId,
         produto_id: item.productId,
         produto_nome: item.productName,
@@ -566,7 +599,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : 2;
 
       const additionalTotal = getItemsTotal(items);
-
       const nextTotal = Number(order.total || 0) + additionalTotal;
 
       const { error: updateError } = await supabase
@@ -574,6 +606,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .update({
           valor_total: nextTotal,
         })
+        .eq('loja_id', LOJA_ATUAL_ID)
         .eq('id', orderId);
 
       if (updateError) throw updateError;
@@ -581,6 +614,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const nowIso = new Date().toISOString();
 
       const itemsToInsert = items.map((item) => ({
+        loja_id: LOJA_ATUAL_ID,
         pedido_id: orderId,
         produto_id: item.productId,
         produto_nome: item.productName,
@@ -628,6 +662,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .update({
             quantidade: qty,
           })
+          .eq('loja_id', LOJA_ATUAL_ID)
           .eq('id', itemId);
 
         if (updateError) throw updateError;
@@ -643,6 +678,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .update({
             valor_total: newTotal,
           })
+          .eq('loja_id', LOJA_ATUAL_ID)
           .eq('id', targetOrder.id);
 
         if (orderError) throw orderError;
@@ -676,6 +712,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error: deleteError } = await supabase
           .from('pedido_itens')
           .delete()
+          .eq('loja_id', LOJA_ATUAL_ID)
           .eq('id', itemId);
 
         if (deleteError) throw deleteError;
@@ -684,6 +721,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const { error: orderDeleteError } = await supabase
             .from('pedidos')
             .delete()
+            .eq('loja_id', LOJA_ATUAL_ID)
             .eq('id', targetOrder.id);
 
           if (orderDeleteError) throw orderDeleteError;
@@ -703,6 +741,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   status: 'livre',
                   updated_at: new Date().toISOString(),
                 })
+                .eq('loja_id', LOJA_ATUAL_ID)
                 .eq('id', targetOrder.mesaId);
 
               if (mesaError) {
@@ -718,6 +757,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             .update({
               valor_total: newTotal,
             })
+            .eq('loja_id', LOJA_ATUAL_ID)
             .eq('id', targetOrder.id);
 
           if (orderUpdateError) throw orderUpdateError;
@@ -738,6 +778,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase
         .from('pedidos')
         .update({ status: newStatus })
+        .eq('loja_id', LOJA_ATUAL_ID)
         .eq('id', orderId);
 
       if (error) throw error;
@@ -753,7 +794,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         (order) => String(order.id) === String(orderId)
       );
 
-      const { error } = await supabase.from('pedidos').delete().eq('id', orderId);
+      const { error } = await supabase
+        .from('pedidos')
+        .delete()
+        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('id', orderId);
+
       if (error) throw error;
 
       if (targetOrder?.mesaId) {
@@ -771,6 +817,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               status: 'livre',
               updated_at: new Date().toISOString(),
             })
+            .eq('loja_id', LOJA_ATUAL_ID)
             .eq('id', targetOrder.mesaId);
 
           if (mesaError) {
@@ -796,6 +843,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { data: openSession, error: openSessionError } = await supabase
           .from('cash_sessions')
           .select('id')
+          .eq('loja_id', LOJA_ATUAL_ID)
           .eq('status', 'open')
           .order('id', { ascending: false })
           .limit(1)
@@ -831,6 +879,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase
           .from('pedidos')
           .update(updatePayload)
+          .eq('loja_id', LOJA_ATUAL_ID)
           .eq('id', orderId);
 
         if (error) throw error;
@@ -854,6 +903,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 status: 'livre',
                 updated_at: new Date().toISOString(),
               })
+              .eq('loja_id', LOJA_ATUAL_ID)
               .eq('id', targetOrder.mesaId);
 
             if (mesaError) throw mesaError;
@@ -890,6 +940,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { data: openSession, error: openSessionError } = await supabase
           .from('cash_sessions')
           .select('id')
+          .eq('loja_id', LOJA_ATUAL_ID)
           .eq('status', 'open')
           .order('id', { ascending: false })
           .limit(1)
@@ -925,6 +976,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase
           .from('pedidos')
           .update(updatePayload)
+          .eq('loja_id', LOJA_ATUAL_ID)
           .in('id', validIds);
 
         if (error) throw error;
@@ -954,6 +1006,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 status: 'livre',
                 updated_at: new Date().toISOString(),
               })
+              .eq('loja_id', LOJA_ATUAL_ID)
               .eq('id', mesaId);
 
             if (mesaError) throw mesaError;
@@ -975,6 +1028,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (product: Omit<Product, 'id'>) => {
       const { error } = await supabase.from('produtos').insert([
         {
+          loja_id: LOJA_ATUAL_ID,
           nome: product.name,
           preco: product.price,
           categoria_id: product.categoryId,
@@ -1003,6 +1057,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           categoria_id: product.categoryId,
           ativo: product.active ?? true,
         })
+        .eq('loja_id', LOJA_ATUAL_ID)
         .eq('id', product.id);
 
       if (error) {
@@ -1019,7 +1074,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteProduct = useCallback(
     async (id: string) => {
-      const { error } = await supabase.from('produtos').delete().eq('id', id);
+      const { error } = await supabase
+        .from('produtos')
+        .delete()
+        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('id', id);
 
       if (error) {
         console.error('Erro ao excluir produto:', error);
@@ -1036,6 +1095,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (category: Omit<Category, 'id'>) => {
       const { error } = await supabase.from('categorias').insert([
         {
+          loja_id: LOJA_ATUAL_ID,
           nome: category.name,
           emoji: category.emoji,
         },
@@ -1060,6 +1120,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           nome: category.name,
           emoji: category.emoji,
         })
+        .eq('loja_id', LOJA_ATUAL_ID)
         .eq('id', category.id);
 
       if (error) {
@@ -1076,7 +1137,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteCategory = useCallback(
     async (id: string) => {
-      const { error } = await supabase.from('categorias').delete().eq('id', id);
+      const { error } = await supabase
+        .from('categorias')
+        .delete()
+        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('id', id);
 
       if (error) {
         console.error('Erro ao excluir categoria:', error);
@@ -1093,6 +1158,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (user: Omit<User, 'id'>) => {
       const { error } = await supabase.from('usuarios').insert([
         {
+          loja_id: LOJA_ATUAL_ID,
           nome: user.name,
           username: user.username,
         },
@@ -1195,6 +1261,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const { error } = await supabase.from('mesas').insert([
           {
+            loja_id: LOJA_ATUAL_ID,
             numero: numeroNormalizado,
             nome: nome?.trim() || `Mesa ${numeroNormalizado}`,
             status: 'livre',
@@ -1244,7 +1311,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const { data: mesasExistentes, error: existingError } = await supabase
           .from('mesas')
-          .select('numero');
+          .select('numero')
+          .eq('loja_id', LOJA_ATUAL_ID);
 
         if (existingError) {
           console.error('Erro ao buscar mesas existentes:', existingError);
@@ -1261,6 +1329,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         for (let numero = ini; numero <= fim; numero++) {
           if (!numerosExistentes.has(numero)) {
             rows.push({
+              loja_id: LOJA_ATUAL_ID,
               numero,
               nome: prefixoNome?.trim()
                 ? `${prefixoNome.trim()} ${numero}`
@@ -1309,6 +1378,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ativa: mesa.ativa ?? true,
           updated_at: new Date().toISOString(),
         })
+        .eq('loja_id', LOJA_ATUAL_ID)
         .eq('id', mesa.id);
 
       if (error) {
@@ -1339,6 +1409,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error: unlinkError } = await supabase
           .from('pedidos')
           .update({ mesa_id: null })
+          .eq('loja_id', LOJA_ATUAL_ID)
           .eq('mesa_id', mesaId);
 
         if (unlinkError) {
@@ -1350,6 +1421,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error: deleteError } = await supabase
           .from('mesas')
           .delete()
+          .eq('loja_id', LOJA_ATUAL_ID)
           .eq('id', mesaId);
 
         if (deleteError) {
