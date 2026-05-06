@@ -14,11 +14,16 @@ import {
   Settings,
   LayoutGrid,
   ExternalLink,
+  MapPin,
+  Phone,
+  FileText,
+  Calendar,
 } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { toast } from 'sonner';
 
 import { supabase } from '@/lib/supabase';
+import { setCurrentStoreId } from '@/lib/current-store';
 
 type Loja = {
   id: string;
@@ -143,14 +148,41 @@ export function DeveloperPanel() {
     });
   }, [lojas, searchTerm]);
 
+  const accessStore = (loja: Loja) => {
+    if (!loja.ativa) {
+      toast.error('Essa loja está inativa. Ative a loja antes de acessar.');
+      return;
+    }
+
+    setCurrentStoreId(loja.id);
+    toast.success(`Acessando ${loja.nome}...`);
+
+    setTimeout(() => {
+      window.location.href = '/dashboard';
+    }, 300);
+  };
+
   const openCreateModal = () => {
     setEditingLoja(null);
     setForm(emptyForm);
     setModalOpen(true);
   };
 
-  const openEditModal = (loja: Loja) => {
+  const openEditModal = async (loja: Loja) => {
     setEditingLoja(loja);
+
+    let nomeImpressora = 'Cozinha';
+
+    const { data: config, error } = await supabase
+      .from('configuracoes_loja')
+      .select('nome_impressora')
+      .eq('loja_id', loja.id)
+      .maybeSingle();
+
+    if (!error && config?.nome_impressora) {
+      nomeImpressora = config.nome_impressora;
+    }
+
     setForm({
       nome: loja.nome || '',
       slug: loja.slug || '',
@@ -159,9 +191,10 @@ export function DeveloperPanel() {
       endereco: loja.endereco || '',
       plano: loja.plano || 'teste',
       ativa: loja.ativa ?? true,
-      nomeImpressora: 'Cozinha',
+      nomeImpressora,
       quantidadeMesas: '0',
     });
+
     setModalOpen(true);
   };
 
@@ -256,6 +289,7 @@ export function DeveloperPanel() {
 
         if (configError) {
           console.error('Erro ao atualizar configurações:', configError);
+          toast.warning('Loja atualizada, mas não foi possível atualizar a configuração.');
         }
 
         toast.success('Loja atualizada com sucesso!');
@@ -386,34 +420,14 @@ export function DeveloperPanel() {
 
       <main className="relative z-10 mx-auto max-w-7xl px-4 py-6 md:px-6">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <StatCard
-            label="Total de lojas"
-            value={String(stats.total)}
-            icon={Building2}
-            tone="primary"
-          />
-          <StatCard
-            label="Lojas ativas"
-            value={String(stats.ativas)}
-            icon={CheckCircle2}
-            tone="success"
-          />
-          <StatCard
-            label="Em teste"
-            value={String(stats.teste)}
-            icon={Wallet}
-            tone="warning"
-          />
-          <StatCard
-            label="Inativas"
-            value={String(stats.inativas)}
-            icon={XCircle}
-            tone="danger"
-          />
+          <StatCard label="Total de lojas" value={String(stats.total)} icon={Building2} tone="primary" />
+          <StatCard label="Lojas ativas" value={String(stats.ativas)} icon={CheckCircle2} tone="success" />
+          <StatCard label="Em teste" value={String(stats.teste)} icon={Wallet} tone="warning" />
+          <StatCard label="Inativas" value={String(stats.inativas)} icon={XCircle} tone="danger" />
         </div>
 
-        <section className="mt-6 rounded-3xl border border-white/10 bg-white/[0.03] p-4 shadow-2xl backdrop-blur-xl md:p-5">
-          <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <section className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] shadow-2xl backdrop-blur-xl">
+          <div className="flex flex-col gap-4 border-b border-white/10 p-4 md:flex-row md:items-center md:justify-between md:p-5">
             <div>
               <h2 className="text-xl font-black">Lojas cadastradas</h2>
               <p className="mt-1 text-sm text-gray-400">
@@ -440,7 +454,7 @@ export function DeveloperPanel() {
               </div>
             </div>
           ) : filteredLojas.length === 0 ? (
-            <div className="rounded-3xl border border-dashed border-white/10 bg-black/30 p-10 text-center">
+            <div className="m-5 rounded-3xl border border-dashed border-white/10 bg-black/30 p-10 text-center">
               <Store className="mx-auto mb-3 h-10 w-10 text-gray-500" />
               <p className="text-lg font-black">Nenhuma loja encontrada</p>
               <p className="mt-1 text-sm text-gray-400">
@@ -457,15 +471,19 @@ export function DeveloperPanel() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="divide-y divide-white/10">
               {filteredLojas.map((loja) => (
                 <div
                   key={loja.id}
-                  className="group rounded-3xl border border-white/10 bg-black/35 p-5 transition hover:-translate-y-1 hover:border-primary/40 hover:bg-black/50 hover:shadow-[0_0_35px_rgba(255,106,0,0.08)]"
+                  className="grid grid-cols-1 gap-4 bg-black/20 p-4 transition hover:bg-white/[0.04] md:grid-cols-[1.2fr_1fr_auto] md:items-center md:p-5"
                 >
-                  <div className="flex items-start justify-between gap-4">
+                  <div className="flex min-w-0 items-center gap-4">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                      <Store className="h-6 w-6" />
+                    </div>
+
                     <div className="min-w-0">
-                      <div className="mb-3 flex flex-wrap items-center gap-2">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
                         <span
                           className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${
                             loja.ativa
@@ -481,52 +499,52 @@ export function DeveloperPanel() {
                         </span>
                       </div>
 
-                      <h3 className="truncate text-2xl font-black">{loja.nome}</h3>
-                      <p className="mt-1 text-sm font-bold text-gray-400">
+                      <h3 className="truncate text-xl font-black">{loja.nome}</h3>
+                      <p className="mt-1 truncate text-sm font-bold text-gray-400">
                         /{loja.slug}
                       </p>
                     </div>
-
-                    <div className="flex shrink-0 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => openEditModal(loja)}
-                        className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-2 text-blue-400 transition hover:bg-blue-500/20"
-                        title="Editar loja"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => toggleStoreStatus(loja)}
-                        className={`rounded-xl border p-2 transition ${
-                          loja.ativa
-                            ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
-                            : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'
-                        }`}
-                        title={loja.ativa ? 'Desativar loja' : 'Ativar loja'}
-                      >
-                        <Power className="h-4 w-4" />
-                      </button>
-                    </div>
                   </div>
 
-                  <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <InfoLine label="Telefone" value={loja.telefone || '-'} />
-                    <InfoLine label="CNPJ" value={loja.cnpj || '-'} />
-                    <InfoLine label="Criada em" value={formatDate(loja.created_at)} />
-                    <InfoLine label="Atualizada em" value={formatDate(loja.updated_at)} />
+                  <div className="grid grid-cols-1 gap-2 text-sm text-gray-300 sm:grid-cols-2">
+                    <MiniInfo icon={Phone} label="Telefone" value={loja.telefone || '-'} />
+                    <MiniInfo icon={FileText} label="CNPJ" value={loja.cnpj || '-'} />
+                    <MiniInfo icon={Calendar} label="Criada em" value={formatDate(loja.created_at)} />
+                    <MiniInfo icon={MapPin} label="Endereço" value={loja.endereco || '-'} />
                   </div>
 
-                  {loja.endereco && (
-                    <div className="mt-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                      <p className="text-[11px] font-black uppercase tracking-wider text-gray-500">
-                        Endereço
-                      </p>
-                      <p className="mt-1 text-sm text-gray-300">{loja.endereco}</p>
-                    </div>
-                  )}
+                  <div className="flex flex-wrap justify-start gap-2 md:justify-end">
+                    <button
+                      type="button"
+                      onClick={() => accessStore(loja)}
+                      className="inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-primary transition hover:bg-primary/20"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Acessar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => openEditModal(loja)}
+                      className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-black text-blue-400 transition hover:bg-blue-500/20"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Editar
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => toggleStoreStatus(loja)}
+                      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black transition ${
+                        loja.ativa
+                          ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                          : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'
+                      }`}
+                    >
+                      <Power className="h-3.5 w-3.5" />
+                      {loja.ativa ? 'Desativar' : 'Ativar'}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -536,7 +554,7 @@ export function DeveloperPanel() {
 
       {modalOpen && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
-          <div className="max-h-[92vh] w-full max-w-2xl overflow-hidden rounded-3xl border border-white/10 bg-[#101010] text-white shadow-2xl">
+          <div className="max-h-[92vh] w-full max-w-3xl overflow-hidden rounded-3xl border border-white/10 bg-[#101010] text-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-white/10 p-5">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.2em] text-primary">
@@ -557,136 +575,167 @@ export function DeveloperPanel() {
             </div>
 
             <div className="max-h-[68vh] overflow-y-auto p-5">
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <Field label="Nome da loja">
-                  <input
-                    value={form.nome}
-                    onChange={(event) => handleChange('nome', event.target.value)}
-                    placeholder="Ex: Burguer House"
-                    className={inputClass}
-                  />
-                </Field>
+              <div className="rounded-3xl border border-white/10 bg-black/30 p-4">
+                <div className="mb-4 flex items-center gap-3 border-b border-white/10 pb-4">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                    <Building2 className="h-6 w-6" />
+                  </div>
 
-                <Field label="Slug da loja">
-                  <input
-                    value={form.slug}
-                    onChange={(event) => handleChange('slug', event.target.value)}
-                    placeholder="burguer-house"
-                    className={inputClass}
-                  />
-                </Field>
+                  <div>
+                    <p className="font-black">Dados principais da loja</p>
+                    <p className="text-xs text-gray-400">
+                      Informações usadas para identificar e organizar a unidade.
+                    </p>
+                  </div>
+                </div>
 
-                <Field label="Telefone">
-                  <input
-                    value={form.telefone}
-                    onChange={(event) => handleChange('telefone', event.target.value)}
-                    placeholder="(19) 99999-9999"
-                    className={inputClass}
-                  />
-                </Field>
-
-                <Field label="CNPJ">
-                  <input
-                    value={form.cnpj}
-                    onChange={(event) => handleChange('cnpj', event.target.value)}
-                    placeholder="00.000.000/0001-00"
-                    className={inputClass}
-                  />
-                </Field>
-
-                <Field label="Plano">
-                  <select
-                    value={form.plano}
-                    onChange={(event) => handleChange('plano', event.target.value)}
-                    className={inputClass}
-                  >
-                    <option value="teste">Teste</option>
-                    <option value="basico">Básico</option>
-                    <option value="pro">Pro</option>
-                    <option value="premium">Premium</option>
-                    <option value="bloqueado">Bloqueado</option>
-                  </select>
-                </Field>
-
-                <Field label="Nome da impressora">
-                  <input
-                    value={form.nomeImpressora}
-                    onChange={(event) =>
-                      handleChange('nomeImpressora', event.target.value)
-                    }
-                    placeholder="Cozinha"
-                    className={inputClass}
-                  />
-                </Field>
-
-                {!editingLoja && (
-                  <Field label="Mesas iniciais">
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <Field label="Nome da loja">
                     <input
-                      value={form.quantidadeMesas}
-                      onChange={(event) =>
-                        handleChange('quantidadeMesas', event.target.value)
-                      }
-                      type="number"
-                      min="0"
-                      placeholder="10"
+                      value={form.nome}
+                      onChange={(event) => handleChange('nome', event.target.value)}
+                      placeholder="Ex: Burguer House"
                       className={inputClass}
                     />
                   </Field>
-                )}
 
-                <div className="flex items-end">
-                  <button
-                    type="button"
-                    onClick={() => handleChange('ativa', !form.ativa)}
-                    className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm font-black transition ${
-                      form.ativa
-                        ? 'border-green-500/30 bg-green-500/10 text-green-400'
-                        : 'border-red-500/30 bg-red-500/10 text-red-400'
-                    }`}
-                  >
-                    <span>{form.ativa ? 'Loja ativa' : 'Loja inativa'}</span>
-                    <Power className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="md:col-span-2">
-                  <Field label="Endereço">
-                    <textarea
-                      value={form.endereco}
-                      onChange={(event) =>
-                        handleChange('endereco', event.target.value)
-                      }
-                      placeholder="Rua, número, bairro, cidade..."
-                      className={`${inputClass} min-h-[90px] resize-none`}
+                  <Field label="Slug da loja">
+                    <input
+                      value={form.slug}
+                      onChange={(event) => handleChange('slug', event.target.value)}
+                      placeholder="burguer-house"
+                      className={inputClass}
                     />
                   </Field>
+
+                  <Field label="Telefone">
+                    <input
+                      value={form.telefone}
+                      onChange={(event) => handleChange('telefone', event.target.value)}
+                      placeholder="(19) 99999-9999"
+                      className={inputClass}
+                    />
+                  </Field>
+
+                  <Field label="CNPJ">
+                    <input
+                      value={form.cnpj}
+                      onChange={(event) => handleChange('cnpj', event.target.value)}
+                      placeholder="00.000.000/0001-00"
+                      className={inputClass}
+                    />
+                  </Field>
+
+                  <div className="md:col-span-2">
+                    <Field label="Endereço">
+                      <textarea
+                        value={form.endereco}
+                        onChange={(event) =>
+                          handleChange('endereco', event.target.value)
+                        }
+                        placeholder="Rua, número, bairro, cidade..."
+                        className={`${inputClass} min-h-[90px] resize-none`}
+                      />
+                    </Field>
+                  </div>
                 </div>
               </div>
 
-              {!editingLoja && (
-                <div className="mt-5 rounded-2xl border border-primary/20 bg-primary/10 p-4">
-                  <div className="flex gap-3">
-                    <LayoutGrid className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="rounded-3xl border border-white/10 bg-black/30 p-4">
+                  <div className="mb-4 flex items-center gap-3 border-b border-white/10 pb-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-blue-400">
+                      <Settings className="h-6 w-6" />
+                    </div>
+
                     <div>
-                      <p className="text-sm font-black text-primary">
-                        Criação automática de mesas
-                      </p>
-                      <p className="mt-1 text-xs leading-relaxed text-gray-300">
-                        Ao criar a loja, o sistema pode gerar automaticamente as mesas
-                        iniciais. Depois você poderá editar ou adicionar novas mesas no
-                        painel operacional da loja.
+                      <p className="font-black">Configurações</p>
+                      <p className="text-xs text-gray-400">
+                        Plano, status e impressão.
                       </p>
                     </div>
                   </div>
-                </div>
-              )}
 
-              <div className="mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
-                <div className="flex gap-3">
-                  <Settings className="mt-0.5 h-5 w-5 shrink-0 text-gray-400" />
-                  <div>
-                    <p className="text-sm font-black">Configuração inicial</p>
-                    <p className="mt-1 text-xs leading-relaxed text-gray-400">
+                  <div className="space-y-4">
+                    <Field label="Plano">
+                      <select
+                        value={form.plano}
+                        onChange={(event) => handleChange('plano', event.target.value)}
+                        className={inputClass}
+                      >
+                        <option value="teste">Teste</option>
+                        <option value="basico">Básico</option>
+                        <option value="pro">Pro</option>
+                        <option value="premium">Premium</option>
+                        <option value="bloqueado">Bloqueado</option>
+                      </select>
+                    </Field>
+
+                    <Field label="Nome da impressora">
+                      <input
+                        value={form.nomeImpressora}
+                        onChange={(event) =>
+                          handleChange('nomeImpressora', event.target.value)
+                        }
+                        placeholder="Cozinha"
+                        className={inputClass}
+                      />
+                    </Field>
+
+                    <button
+                      type="button"
+                      onClick={() => handleChange('ativa', !form.ativa)}
+                      className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm font-black transition ${
+                        form.ativa
+                          ? 'border-green-500/30 bg-green-500/10 text-green-400'
+                          : 'border-red-500/30 bg-red-500/10 text-red-400'
+                      }`}
+                    >
+                      <span>{form.ativa ? 'Loja ativa' : 'Loja inativa'}</span>
+                      <Power className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border border-white/10 bg-black/30 p-4">
+                  <div className="mb-4 flex items-center gap-3 border-b border-white/10 pb-4">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/10 text-amber-400">
+                      <LayoutGrid className="h-6 w-6" />
+                    </div>
+
+                    <div>
+                      <p className="font-black">Mesas iniciais</p>
+                      <p className="text-xs text-gray-400">
+                        Geradas automaticamente na criação.
+                      </p>
+                    </div>
+                  </div>
+
+                  {!editingLoja ? (
+                    <Field label="Quantidade de mesas">
+                      <input
+                        value={form.quantidadeMesas}
+                        onChange={(event) =>
+                          handleChange('quantidadeMesas', event.target.value)
+                        }
+                        type="number"
+                        min="0"
+                        placeholder="10"
+                        className={inputClass}
+                      />
+                    </Field>
+                  ) : (
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-gray-400">
+                      A quantidade de mesas iniciais só pode ser definida na criação da loja.
+                      Depois, edite as mesas dentro da operação da unidade.
+                    </div>
+                  )}
+
+                  <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/10 p-4">
+                    <p className="text-sm font-black text-primary">
+                      Configuração inicial
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-gray-300">
                       A loja será criada com impressão automática habilitada,
                       cupom 58mm e configuração padrão de cozinha.
                     </p>
@@ -765,13 +814,24 @@ function StatCard({
   );
 }
 
-function InfoLine({ label, value }: { label: string; value: string }) {
+function MiniInfo({
+  label,
+  value,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  icon: React.ElementType;
+}) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-      <p className="text-[11px] font-black uppercase tracking-wider text-gray-500">
-        {label}
-      </p>
-      <p className="mt-1 truncate text-sm font-bold text-gray-200">{value}</p>
+    <div className="flex min-w-0 items-center gap-2">
+      <Icon className="h-3.5 w-3.5 shrink-0 text-gray-500" />
+      <div className="min-w-0">
+        <p className="text-[10px] font-black uppercase tracking-wider text-gray-500">
+          {label}
+        </p>
+        <p className="truncate text-xs font-bold text-gray-300">{value}</p>
+      </div>
     </div>
   );
 }

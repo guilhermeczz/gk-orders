@@ -73,8 +73,8 @@ function DashboardPage() {
         <AppHeader onNewOrder={handleNewOrder} />
       </div>
 
-      <main className="pt-[140px] px-4 md:px-6 pb-8 max-w-7xl mx-auto">
-        <div className="flex justify-between items-end mb-8 print:hidden">
+<main className="pt-[195px] px-4 md:px-6 pb-8 max-w-7xl mx-auto">
+          <div className="flex justify-between items-end mb-8 print:hidden">
           <div className="bg-background pt-2">
             <h2 className="text-sm font-black text-muted-foreground uppercase tracking-widest mb-1">
               Painel Diário

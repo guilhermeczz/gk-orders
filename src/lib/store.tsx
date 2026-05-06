@@ -18,7 +18,10 @@ import type {
   Mesa,
 } from './types';
 import { supabase } from './supabase';
-import { LOJA_ATUAL_ID } from './current-store';
+import {
+  getCurrentStoreId,
+  subscribeToCurrentStoreChange,
+} from './current-store';
 import { toast } from 'sonner';
 
 interface CashPaymentMeta {
@@ -162,12 +165,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [users, setUsers] = useState<User[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [mesas, setMesas] = useState<Mesa[]>([]);
+  const [lojaAtualId, setLojaAtualId] = useState(() => getCurrentStoreId());
+
+  useEffect(() => {
+    const unsubscribe = subscribeToCurrentStoreChange((nextLojaId) => {
+      setLojaAtualId(nextLojaId);
+    });
+
+    return unsubscribe;
+  }, []);
 
   const fetchUsers = useCallback(async () => {
     const { data: userData, error } = await supabase
       .from('usuarios')
       .select('id, nome, username')
-      .eq('loja_id', LOJA_ATUAL_ID)
+      .eq('loja_id', lojaAtualId)
       .order('nome');
 
     if (error) {
@@ -182,13 +194,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         username: u.username,
       }))
     );
-  }, []);
+  }, [lojaAtualId]);
 
   const fetchMesas = useCallback(async () => {
     const { data, error } = await supabase
       .from('mesas')
       .select('*')
-      .eq('loja_id', LOJA_ATUAL_ID)
+      .eq('loja_id', lojaAtualId)
       .order('numero', { ascending: true });
 
     if (error) {
@@ -208,7 +220,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         updatedAt: mesa.updated_at ?? null,
       }))
     );
-  }, []);
+  }, [lojaAtualId]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -219,13 +231,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         supabase
           .from('categorias')
           .select('*')
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .order('nome'),
 
         supabase
           .from('produtos')
           .select('*')
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .order('nome'),
       ]);
 
@@ -260,7 +272,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { data: orderData, error: orderError } = await supabase
         .from('pedidos')
         .select('*, pedido_itens(*)')
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .order('created_at', { ascending: false });
 
       if (orderError) {
@@ -365,7 +377,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Erro ao buscar dados:', error);
     }
-  }, [fetchUsers, fetchMesas]);
+  }, [fetchUsers, fetchMesas, lojaAtualId]);
 
   useEffect(() => {
     fetchData();
@@ -393,7 +405,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }, 150);
     };
 
-    const channelName = `gk-orders-realtime-${LOJA_ATUAL_ID}-${Date.now()}-${Math.random()
+    const channelName = `gk-orders-realtime-${lojaAtualId}-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2)}`;
 
@@ -405,7 +417,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           event: '*',
           schema: 'public',
           table: 'pedidos',
-          filter: `loja_id=eq.${LOJA_ATUAL_ID}`,
+          filter: `loja_id=eq.${lojaAtualId}`,
         },
         () => refreshNow()
       )
@@ -415,7 +427,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           event: '*',
           schema: 'public',
           table: 'pedido_itens',
-          filter: `loja_id=eq.${LOJA_ATUAL_ID}`,
+          filter: `loja_id=eq.${lojaAtualId}`,
         },
         () => refreshNow()
       )
@@ -425,7 +437,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           event: '*',
           schema: 'public',
           table: 'mesas',
-          filter: `loja_id=eq.${LOJA_ATUAL_ID}`,
+          filter: `loja_id=eq.${lojaAtualId}`,
         },
         () => refreshNow()
       )
@@ -462,7 +474,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       supabase.removeChannel(channel);
     };
-  }, [fetchData]);
+  }, [fetchData, lojaAtualId]);
 
   const addOrder = useCallback(
     async (
@@ -479,7 +491,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .from('pedidos')
         .insert([
           {
-            loja_id: LOJA_ATUAL_ID,
+            loja_id: lojaAtualId,
             cliente_nome: customerName,
             valor_total: total,
             status: 'new',
@@ -503,14 +515,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
             garcom_nome: mesaAtual?.garcomNome ?? null,
             updated_at: new Date().toISOString(),
           })
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .eq('id', mesaId);
 
         if (mesaError) throw mesaError;
       }
 
       const itemsToInsert = items.map((item) => ({
-        loja_id: LOJA_ATUAL_ID,
+        loja_id: lojaAtualId,
         pedido_id: order.id,
         produto_id: item.productId,
         produto_nome: item.productName,
@@ -531,7 +543,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await fetchData();
       toast.success('Pedido realizado!');
     },
-    [fetchData, mesas]
+    [fetchData, mesas, lojaAtualId]
   );
 
   const updateOrder = useCallback(
@@ -550,7 +562,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           valor_total: total,
           observacao: notes,
         })
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('id', orderId);
 
       if (orderError) throw orderError;
@@ -558,13 +570,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { error: deleteError } = await supabase
         .from('pedido_itens')
         .delete()
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('pedido_id', orderId);
 
       if (deleteError) throw deleteError;
 
       const itemsToInsert = items.map((item) => ({
-        loja_id: LOJA_ATUAL_ID,
+        loja_id: lojaAtualId,
         pedido_id: orderId,
         produto_id: item.productId,
         produto_nome: item.productName,
@@ -585,7 +597,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await fetchData();
       toast.success('Pedido atualizado!');
     },
-    [fetchData]
+    [fetchData, lojaAtualId]
   );
 
   const appendItemsToOrder = useCallback(
@@ -606,7 +618,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .update({
           valor_total: nextTotal,
         })
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('id', orderId);
 
       if (updateError) throw updateError;
@@ -614,7 +626,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const nowIso = new Date().toISOString();
 
       const itemsToInsert = items.map((item) => ({
-        loja_id: LOJA_ATUAL_ID,
+        loja_id: lojaAtualId,
         pedido_id: orderId,
         produto_id: item.productId,
         produto_nome: item.productName,
@@ -635,7 +647,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await fetchData();
       toast.success('Itens adicionados ao pedido!');
     },
-    [fetchData, orders]
+    [fetchData, orders, lojaAtualId]
   );
 
   const updateOrderItem = useCallback(
@@ -662,7 +674,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .update({
             quantidade: qty,
           })
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .eq('id', itemId);
 
         if (updateError) throw updateError;
@@ -678,7 +690,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           .update({
             valor_total: newTotal,
           })
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .eq('id', targetOrder.id);
 
         if (orderError) throw orderError;
@@ -690,7 +702,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast.error('Não foi possível atualizar o item.');
       }
     },
-    [orders, fetchData]
+    [orders, fetchData, lojaAtualId]
   );
 
   const deleteOrderItem = useCallback(
@@ -712,7 +724,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error: deleteError } = await supabase
           .from('pedido_itens')
           .delete()
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .eq('id', itemId);
 
         if (deleteError) throw deleteError;
@@ -721,7 +733,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           const { error: orderDeleteError } = await supabase
             .from('pedidos')
             .delete()
-            .eq('loja_id', LOJA_ATUAL_ID)
+            .eq('loja_id', lojaAtualId)
             .eq('id', targetOrder.id);
 
           if (orderDeleteError) throw orderDeleteError;
@@ -741,7 +753,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                   status: 'livre',
                   updated_at: new Date().toISOString(),
                 })
-                .eq('loja_id', LOJA_ATUAL_ID)
+                .eq('loja_id', lojaAtualId)
                 .eq('id', targetOrder.mesaId);
 
               if (mesaError) {
@@ -757,7 +769,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             .update({
               valor_total: newTotal,
             })
-            .eq('loja_id', LOJA_ATUAL_ID)
+            .eq('loja_id', lojaAtualId)
             .eq('id', targetOrder.id);
 
           if (orderUpdateError) throw orderUpdateError;
@@ -770,7 +782,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast.error('Não foi possível excluir o item.');
       }
     },
-    [orders, fetchData]
+    [orders, fetchData, lojaAtualId]
   );
 
   const moveOrder = useCallback(
@@ -778,14 +790,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase
         .from('pedidos')
         .update({ status: newStatus })
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('id', orderId);
 
       if (error) throw error;
 
       await fetchData();
     },
-    [fetchData]
+    [fetchData, lojaAtualId]
   );
 
   const deleteOrder = useCallback(
@@ -797,7 +809,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase
         .from('pedidos')
         .delete()
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('id', orderId);
 
       if (error) throw error;
@@ -817,7 +829,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
               status: 'livre',
               updated_at: new Date().toISOString(),
             })
-            .eq('loja_id', LOJA_ATUAL_ID)
+            .eq('loja_id', lojaAtualId)
             .eq('id', targetOrder.mesaId);
 
           if (mesaError) {
@@ -828,7 +840,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       await fetchData();
     },
-    [fetchData, orders]
+    [fetchData, orders, lojaAtualId]
   );
 
   const payOrder = useCallback(
@@ -843,7 +855,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { data: openSession, error: openSessionError } = await supabase
           .from('cash_sessions')
           .select('id')
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .eq('status', 'open')
           .order('id', { ascending: false })
           .limit(1)
@@ -879,7 +891,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase
           .from('pedidos')
           .update(updatePayload)
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .eq('id', orderId);
 
         if (error) throw error;
@@ -903,7 +915,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 status: 'livre',
                 updated_at: new Date().toISOString(),
               })
-              .eq('loja_id', LOJA_ATUAL_ID)
+              .eq('loja_id', lojaAtualId)
               .eq('id', targetOrder.mesaId);
 
             if (mesaError) throw mesaError;
@@ -918,7 +930,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     },
-    [fetchData, orders]
+    [fetchData, orders, lojaAtualId]
   );
 
   const payOrdersBulk = useCallback(
@@ -940,7 +952,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { data: openSession, error: openSessionError } = await supabase
           .from('cash_sessions')
           .select('id')
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .eq('status', 'open')
           .order('id', { ascending: false })
           .limit(1)
@@ -976,7 +988,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase
           .from('pedidos')
           .update(updatePayload)
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .in('id', validIds);
 
         if (error) throw error;
@@ -1006,7 +1018,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 status: 'livre',
                 updated_at: new Date().toISOString(),
               })
-              .eq('loja_id', LOJA_ATUAL_ID)
+              .eq('loja_id', lojaAtualId)
               .eq('id', mesaId);
 
             if (mesaError) throw mesaError;
@@ -1021,14 +1033,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         throw error;
       }
     },
-    [fetchData, orders]
+    [fetchData, orders, lojaAtualId]
   );
 
   const addProduct = useCallback(
     async (product: Omit<Product, 'id'>) => {
       const { error } = await supabase.from('produtos').insert([
         {
-          loja_id: LOJA_ATUAL_ID,
+          loja_id: lojaAtualId,
           nome: product.name,
           preco: product.price,
           categoria_id: product.categoryId,
@@ -1044,7 +1056,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await fetchData();
       return true;
     },
-    [fetchData]
+    [fetchData, lojaAtualId]
   );
 
   const updateProduct = useCallback(
@@ -1057,7 +1069,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           categoria_id: product.categoryId,
           ativo: product.active ?? true,
         })
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('id', product.id);
 
       if (error) {
@@ -1069,7 +1081,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await fetchData();
       toast.success('Produto atualizado!');
     },
-    [fetchData]
+    [fetchData, lojaAtualId]
   );
 
   const deleteProduct = useCallback(
@@ -1077,7 +1089,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase
         .from('produtos')
         .delete()
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('id', id);
 
       if (error) {
@@ -1088,14 +1100,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       await fetchData();
     },
-    [fetchData]
+    [fetchData, lojaAtualId]
   );
 
   const addCategory = useCallback(
     async (category: Omit<Category, 'id'>) => {
       const { error } = await supabase.from('categorias').insert([
         {
-          loja_id: LOJA_ATUAL_ID,
+          loja_id: lojaAtualId,
           nome: category.name,
           emoji: category.emoji,
         },
@@ -1109,7 +1121,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       await fetchData();
     },
-    [fetchData]
+    [fetchData, lojaAtualId]
   );
 
   const updateCategory = useCallback(
@@ -1120,7 +1132,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           nome: category.name,
           emoji: category.emoji,
         })
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('id', category.id);
 
       if (error) {
@@ -1132,7 +1144,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await fetchData();
       toast.success('Categoria atualizada!');
     },
-    [fetchData]
+    [fetchData, lojaAtualId]
   );
 
   const deleteCategory = useCallback(
@@ -1140,7 +1152,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const { error } = await supabase
         .from('categorias')
         .delete()
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('id', id);
 
       if (error) {
@@ -1151,14 +1163,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       await fetchData();
     },
-    [fetchData]
+    [fetchData, lojaAtualId]
   );
 
   const addUser = useCallback(
     async (user: Omit<User, 'id'>) => {
       const { error } = await supabase.from('usuarios').insert([
         {
-          loja_id: LOJA_ATUAL_ID,
+          loja_id: lojaAtualId,
           nome: user.name,
           username: user.username,
         },
@@ -1172,7 +1184,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await fetchUsers();
       return true;
     },
-    [fetchUsers]
+    [fetchUsers, lojaAtualId]
   );
 
   const deleteUser = useCallback(
@@ -1261,7 +1273,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         const { error } = await supabase.from('mesas').insert([
           {
-            loja_id: LOJA_ATUAL_ID,
+            loja_id: lojaAtualId,
             numero: numeroNormalizado,
             nome: nome?.trim() || `Mesa ${numeroNormalizado}`,
             status: 'livre',
@@ -1285,7 +1297,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [fetchData, mesas]
+    [fetchData, mesas, lojaAtualId]
   );
 
   const addMesasEmLote = useCallback(
@@ -1312,7 +1324,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { data: mesasExistentes, error: existingError } = await supabase
           .from('mesas')
           .select('numero')
-          .eq('loja_id', LOJA_ATUAL_ID);
+          .eq('loja_id', lojaAtualId);
 
         if (existingError) {
           console.error('Erro ao buscar mesas existentes:', existingError);
@@ -1329,7 +1341,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         for (let numero = ini; numero <= fim; numero++) {
           if (!numerosExistentes.has(numero)) {
             rows.push({
-              loja_id: LOJA_ATUAL_ID,
+              loja_id: lojaAtualId,
               numero,
               nome: prefixoNome?.trim()
                 ? `${prefixoNome.trim()} ${numero}`
@@ -1363,7 +1375,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [fetchData]
+    [fetchData, lojaAtualId]
   );
 
   const updateMesa = useCallback(
@@ -1378,7 +1390,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ativa: mesa.ativa ?? true,
           updated_at: new Date().toISOString(),
         })
-        .eq('loja_id', LOJA_ATUAL_ID)
+        .eq('loja_id', lojaAtualId)
         .eq('id', mesa.id);
 
       if (error) {
@@ -1390,7 +1402,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await fetchMesas();
       toast.success('Mesa atualizada!');
     },
-    [fetchMesas]
+    [fetchMesas, lojaAtualId]
   );
 
   const deleteMesa = useCallback(
@@ -1409,7 +1421,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error: unlinkError } = await supabase
           .from('pedidos')
           .update({ mesa_id: null })
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .eq('mesa_id', mesaId);
 
         if (unlinkError) {
@@ -1421,7 +1433,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const { error: deleteError } = await supabase
           .from('mesas')
           .delete()
-          .eq('loja_id', LOJA_ATUAL_ID)
+          .eq('loja_id', lojaAtualId)
           .eq('id', mesaId);
 
         if (deleteError) {
@@ -1437,7 +1449,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         toast.error('Não foi possível excluir a mesa.');
       }
     },
-    [fetchData, orders]
+    [fetchData, orders, lojaAtualId]
   );
 
   const getTodayOrders = () =>

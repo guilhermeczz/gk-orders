@@ -1,42 +1,41 @@
 // @ts-ignore
-import React from "react";
+import React from 'react';
 
 if (typeof window !== 'undefined' && !window.crypto.randomUUID) {
   // @ts-ignore
-  window.crypto.randomUUID = function() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+  window.crypto.randomUUID = function () {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      const r = (Math.random() * 16) | 0;
+      const v = c === 'x' ? r : (r & 0x3) | 0x8;
       return v.toString(16);
     });
   };
 }
 
-import { createFileRoute, Navigate } from '@tanstack/react-router';
+import { createFileRoute, Navigate, useNavigate } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
-import { Loader2 } from 'lucide-react';
-import logoFull from '@/assets/logo-full.png';
+import {
+  Loader2,
+  UserRound,
+  KeyRound,
+  ShieldCheck,
+  ArrowRight,
+  LockKeyhole,
+} from 'lucide-react';
 
 export const Route = createFileRoute('/')({
   component: LoginPage,
 });
 
 function LoginPage() {
-  const { isAuthenticated, login, register } = useAuth();
+  const { isAuthenticated, login } = useAuth();
   const navigate = useNavigate();
-  const [tab, setTab] = useState<'login' | 'register'>('login');
-  const [loading, setLoading] = useState(false);
 
+  const [loading, setLoading] = useState(false);
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
-
-  const [regName, setRegName] = useState('');
-  const [regUser, setRegUser] = useState('');
-  const [regPass, setRegPass] = useState('');
-  const [regConfirm, setRegConfirm] = useState('');
 
   if (isAuthenticated) {
     return <Navigate to="/dashboard" />;
@@ -44,12 +43,15 @@ function LoginPage() {
 
   const handleLogin = async () => {
     if (!loginUser.trim() || !loginPass.trim()) {
-      toast.error('Preencha todos os campos.');
+      toast.error('Preencha usuário e senha.');
       return;
     }
+
     setLoading(true);
+
     try {
       const success = await login(loginUser.trim(), loginPass);
+
       if (success) {
         navigate({ to: '/dashboard' });
       }
@@ -58,167 +60,193 @@ function LoginPage() {
     }
   };
 
-  const handleRegister = async () => {
-    if (!regName.trim() || !regUser.trim() || !regPass || !regConfirm) {
-      toast.error('Preencha todos os campos.');
-      return;
-    }
-    if (regPass.length < 6) {
-      toast.error('A senha deve ter no mínimo 6 caracteres.');
-      return;
-    }
-    if (regPass !== regConfirm) {
-      toast.error('As senhas não coincidem.');
-      return;
-    }
-    setLoading(true);
-    try {
-      const success = await register(regName.trim(), regUser.trim(), regPass);
-      if (success) {
-        navigate({ to: '/dashboard' });
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  const inputClass = "w-full bg-white text-black placeholder:text-gray-400 border border-border rounded-xl px-4 py-3.5 focus:border-primary focus:shadow-[0_0_10px_rgba(255,106,0,0.2)] outline-none transition-all font-medium";
+  const inputClass =
+    'w-full rounded-2xl border border-white/10 bg-white px-12 py-4 text-[15px] font-medium text-black outline-none transition-all placeholder:text-gray-400 focus:border-primary focus:ring-4 focus:ring-primary/15';
 
   return (
-    <div className="min-h-screen w-full flex bg-background">
-      
-      {/* LADO ESQUERDO: Banner com Imagem (Escondido no Mobile) */}
-      <div className="hidden lg:flex w-1/2 relative bg-black items-end p-16 overflow-hidden">
-        {/* Imagem de Fundo (Unsplash API) */}
-        <div className="absolute inset-0 w-full h-full">
-          <img
-            src="https://images.unsplash.com/photo-1568901346375-23c9450c58cd?q=80&w=1999&auto=format&fit=crop"
-            alt="Hambúrguer Artesanal"
-            className="w-full h-full object-cover opacity-50 scale-105 hover:scale-100 transition-transform duration-[10s] ease-out"
-          />
-          {/* Gradiente escuro para garantir leitura do texto */}
-          <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent" />
+    <div className="relative min-h-screen overflow-hidden bg-[#050505] text-white">
+      {/* Fundo visual abstrato GK Orders */}
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_22%_20%,rgba(255,106,0,0.28),transparent_32%),radial-gradient(circle_at_80%_75%,rgba(255,180,80,0.12),transparent_32%),linear-gradient(135deg,#050505_0%,#0d0d10_48%,#050505_100%)]" />
+
+        <div className="absolute left-1/2 top-1/2 h-[720px] w-[720px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10" />
+        <div className="absolute left-1/2 top-1/2 h-[520px] w-[520px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-primary/20" />
+        <div className="absolute left-1/2 top-1/2 h-[340px] w-[340px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/10" />
+
+        <div className="absolute -left-32 top-20 h-[420px] w-[420px] rounded-full bg-primary/20 blur-[130px]" />
+        <div className="absolute -right-32 bottom-20 h-[420px] w-[420px] rounded-full bg-orange-400/10 blur-[130px]" />
+
+        <div className="absolute inset-0 opacity-[0.055] bg-[linear-gradient(to_right,rgba(255,255,255,0.9)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.9)_1px,transparent_1px)] bg-[size:76px_76px]" />
+
+        <div className="absolute left-[7%] top-[18%] hidden select-none text-[230px] font-black leading-none tracking-[-0.12em] text-white/[0.035] lg:block">
+          GK
         </div>
 
-        {/* Texto de Impacto */}
-        <div className="relative z-10 animate-slide-up">
-          <h1 className="text-5xl xl:text-6xl font-black text-white mb-6 leading-tight drop-shadow-lg">
-            A agilidade que a sua <br/>
-            <span className="text-primary">cozinha precisa.</span>
-          </h1>
-          <p className="text-lg text-gray-300 max-w-md font-medium leading-relaxed drop-shadow-md">
-            Gestão inteligente de pedidos, PDV integrado e impressão automática. Tudo em uma única plataforma.
-          </p>
-        </div>
+        <div className="absolute bottom-0 left-0 right-0 h-80 bg-gradient-to-t from-black via-black/60 to-transparent" />
       </div>
 
-      {/* LADO DIREITO: Formulário de Login */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-6 relative overflow-hidden">
-        
-        {/* Efeito de luz (Glow) suave no fundo */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] bg-primary/10 blur-[120px] rounded-full pointer-events-none" />
+      <main className="relative z-10 flex min-h-screen items-center justify-center px-5 py-8">
+        <div className="grid w-full max-w-6xl grid-cols-1 items-center gap-12 lg:grid-cols-[1fr_430px]">
+          {/* Área de marca, sem cards */}
+          <section className="hidden lg:block">
+            <div className="max-w-2xl">
+              <div className="inline-flex items-center gap-4 rounded-[1.7rem] border border-white/10 bg-white/[0.045] px-5 py-4 shadow-2xl backdrop-blur-xl">
+                <div className="flex h-16 w-16 items-center justify-center rounded-[1.35rem] bg-primary text-2xl font-black text-black shadow-[0_0_45px_rgba(255,106,0,0.35)]">
+                  GK
+                </div>
 
-        <div className="w-full max-w-md relative z-10 animate-fade-in">
-          
-          <div className="text-center mb-8">
-            <img src={logoFull} alt="Gardens Lanches" className="w-48 h-48 mx-auto object-contain drop-shadow-2xl" width={512} height={512} />
-          </div>
+                <div>
+                  <p className="text-[30px] font-semibold tracking-tight text-white">
+                    GK Orders
+                  </p>
+                  <p className="mt-1 text-xs font-semibold uppercase tracking-[0.26em] text-primary">
+                    Sistema operacional
+                  </p>
+                </div>
+              </div>
 
-          <div className="bg-card/50 backdrop-blur-xl border border-border/50 rounded-3xl p-8 shadow-2xl">
-            <div className="flex mb-8 bg-background/80 rounded-xl p-1.5 border border-border shadow-inner">
-              <button
-                onClick={() => setTab('login')}
-                className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${
-                  tab === 'login'
-                    ? 'bg-primary text-black shadow-md scale-[1.02]'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Fazer Login
-              </button>
-              <button
-                onClick={() => setTab('register')}
-                className={`flex-1 py-3 rounded-lg text-sm font-bold transition-all ${
-                  tab === 'register'
-                    ? 'bg-primary text-black shadow-md scale-[1.02]'
-                    : 'text-muted-foreground hover:text-foreground'
-                }`}
-              >
-                Criar Conta
-              </button>
+              <div className="mt-16">
+                <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.22em] text-primary">
+                  <ShieldCheck className="h-4 w-4" />
+                  Acesso seguro
+                </p>
+
+                <h1 className="max-w-2xl text-[54px] font-semibold leading-[1.04] tracking-[-0.04em] text-white">
+                  A gestão da sua operação começa aqui.
+                </h1>
+
+                <p className="mt-6 max-w-xl text-[17px] leading-8 text-gray-400">
+                  Entre no GK Orders para acessar sua loja, acompanhar sua operação
+                  e manter tudo organizado em um ambiente moderno e seguro.
+                </p>
+              </div>
+
+              <div className="mt-12 flex items-center gap-3 text-sm font-medium text-gray-400">
+                <span className="h-2.5 w-2.5 rounded-full bg-green-400 shadow-[0_0_18px_rgba(74,222,128,0.9)]" />
+                Plataforma online e protegida
+              </div>
+            </div>
+          </section>
+
+          {/* Login */}
+          <section className="mx-auto w-full max-w-md">
+            <div className="mb-8 text-center lg:hidden">
+              <div className="mx-auto mb-5 flex h-24 w-24 items-center justify-center rounded-[2rem] bg-primary text-4xl font-black text-black shadow-[0_0_45px_rgba(255,106,0,0.35)]">
+                GK
+              </div>
+
+              <h1 className="text-3xl font-semibold tracking-tight">GK Orders</h1>
+              <p className="mt-2 text-sm text-gray-400">
+                Sistema operacional da sua loja.
+              </p>
             </div>
 
-            {tab === 'login' ? (
-              <div className="space-y-4 animate-fade-in">
-                <input
-                  value={loginUser}
-                  onChange={e => setLoginUser(e.target.value)}
-                  placeholder="Usuário"
-                  className={inputClass}
-                />
-                <input
-                  value={loginPass}
-                  onChange={e => setLoginPass(e.target.value)}
-                  type="password"
-                  placeholder="Senha"
-                  className={inputClass}
-                  onKeyDown={e => e.key === 'Enter' && handleLogin()}
-                />
-                <button
-                  onClick={handleLogin}
-                  disabled={loading}
-                  className="w-full mt-4 py-4 rounded-xl bg-primary text-black font-black text-[15px] shadow-[0_0_20px_rgba(255,106,0,0.2)] disabled:opacity-50 flex items-center justify-center gap-2 transition-all active:scale-95 hover:shadow-[0_0_25px_rgba(255,106,0,0.4)] hover:-translate-y-0.5"
-                >
-                  {loading && <Loader2 className="w-5 h-5 animate-spin" />}
-                  {loading ? 'Autenticando...' : 'Acessar o Sistema'}
-                </button>
+            <div className="relative">
+              <div className="absolute -inset-6 rounded-[3rem] bg-primary/10 blur-3xl" />
+
+              <div className="relative overflow-hidden rounded-[2.3rem] border border-white/10 bg-white/[0.07] shadow-[0_35px_140px_rgba(0,0,0,0.72)] backdrop-blur-2xl">
+                <div className="border-b border-white/10 bg-black/25 px-7 py-8">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-16 w-16 items-center justify-center rounded-[1.35rem] bg-primary text-2xl font-black text-black shadow-[0_0_40px_rgba(255,106,0,0.32)]">
+                      GK
+                    </div>
+
+                    <div>
+                      <p className="text-[27px] font-semibold tracking-tight text-white">
+                        GK Orders
+                      </p>
+                      <p className="mt-1 text-xs font-semibold uppercase tracking-[0.22em] text-primary">
+                        Login
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-8">
+                    <h2 className="text-[30px] font-semibold tracking-tight text-white">
+                      Bem-vindo
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-gray-400">
+                      Acesse sua conta para continuar.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="px-7 py-7">
+                  <div className="mb-6 flex items-center gap-3 rounded-2xl border border-white/10 bg-black/30 px-4 py-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                      <LockKeyhole className="h-4.5 w-4.5" />
+                    </div>
+
+                    <p className="text-sm font-medium text-gray-300">
+                      Acesso exclusivo para usuários autorizados.
+                    </p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+                        Usuário
+                      </label>
+
+                      <div className="relative">
+                        <UserRound className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
+                        <input
+                          value={loginUser}
+                          onChange={(e) => setLoginUser(e.target.value)}
+                          placeholder="Digite seu usuário"
+                          className={inputClass}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-400">
+                        Senha
+                      </label>
+
+                      <div className="relative">
+                        <KeyRound className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-gray-400" />
+                        <input
+                          value={loginPass}
+                          onChange={(e) => setLoginPass(e.target.value)}
+                          type="password"
+                          placeholder="Digite sua senha"
+                          className={inputClass}
+                          onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={handleLogin}
+                      disabled={loading}
+                      className="group mt-2 flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-4 text-sm font-semibold text-black shadow-[0_0_32px_rgba(255,106,0,0.32)] transition-all hover:-translate-y-0.5 hover:shadow-[0_0_46px_rgba(255,106,0,0.48)] active:scale-[0.99] disabled:opacity-60"
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="h-5 w-5 animate-spin" />
+                          Entrando...
+                        </>
+                      ) : (
+                        <>
+                          Acessar sistema
+                          <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-1" />
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  <div className="mt-6 border-t border-white/10 pt-5 text-center">
+                    <p className="text-xs text-gray-500">
+                      © {new Date().getFullYear()} GK Orders. Todos os direitos reservados.
+                    </p>
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="space-y-4 animate-fade-in">
-                <input
-                  value={regName}
-                  onChange={e => setRegName(e.target.value)}
-                  placeholder="Nome completo"
-                  className={inputClass}
-                />
-                <input
-                  value={regUser}
-                  onChange={e => setRegUser(e.target.value)}
-                  placeholder="Usuário"
-                  className={inputClass}
-                />
-                <input
-                  value={regPass}
-                  onChange={e => setRegPass(e.target.value)}
-                  type="password"
-                  placeholder="Senha (mín. 6 caracteres)"
-                  className={inputClass}
-                />
-                <input
-                  value={regConfirm}
-                  onChange={e => setRegConfirm(e.target.value)}
-                  type="password"
-                  placeholder="Confirmar senha"
-                  className={inputClass}
-                  onKeyDown={e => e.key === 'Enter' && handleRegister()}
-                />
-                <button
-                  onClick={handleRegister}
-                  disabled={loading}
-                  className="w-full mt-4 py-4 rounded-xl bg-primary text-black font-black text-[15px] shadow-[0_0_20px_rgba(255,106,0,0.2)] disabled:opacity-50 flex items-center justify-center gap-2 transition-all active:scale-95 hover:shadow-[0_0_25px_rgba(255,106,0,0.4)] hover:-translate-y-0.5"
-                >
-                  {loading && <Loader2 className="w-5 h-5 animate-spin" />}
-                  {loading ? 'Registrando...' : 'Finalizar Cadastro'}
-                </button>
-              </div>
-            )}
-          </div>
-          
-          <p className="text-center text-xs text-muted-foreground mt-8 font-medium">
-            &copy; {new Date().getFullYear()} Gardens Lanches. Todos os direitos reservados.
-          </p>
+            </div>
+          </section>
         </div>
-      </div>
+      </main>
     </div>
   );
 }
