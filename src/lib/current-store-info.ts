@@ -18,6 +18,7 @@ export function useCurrentStoreInfo() {
   const [storeInfo, setStoreInfo] = useState<CurrentStoreInfo | null>(null);
   const [loadingStore, setLoadingStore] = useState(true);
 
+  // Escuta as mudanças de loja (Ex: Quando o usuário troca de loja ou faz login)
   useEffect(() => {
     const unsubscribe = subscribeToCurrentStoreChange((nextStoreId) => {
       setStoreId(nextStoreId);
@@ -26,10 +27,20 @@ export function useCurrentStoreInfo() {
     return unsubscribe;
   }, []);
 
+  // Busca os dados da loja selecionada no Supabase
   useEffect(() => {
     let active = true;
 
     const fetchStore = async () => {
+      // OTIMIZAÇÃO: Se não tiver ID de loja, não gasta requisição à toa no banco!
+      if (!storeId) {
+        if (active) {
+          setStoreInfo(null);
+          setLoadingStore(false);
+        }
+        return;
+      }
+
       setLoadingStore(true);
 
       const { data, error } = await supabase

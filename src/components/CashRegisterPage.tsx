@@ -57,7 +57,8 @@ function parseMoneyInput(value: string) {
 }
 
 export function CashRegisterPage() {
-  const { orders } = useAppStore();
+  // Extraímos o lojaAtualId do store para aplicar os filtros
+  const { orders, lojaAtualId } = useAppStore();
   const { user } = useAuth();
 
   const [loading, setLoading] = useState(false);
@@ -76,9 +77,12 @@ export function CashRegisterPage() {
   const [notes, setNotes] = useState('');
 
   const fetchOpenSession = useCallback(async () => {
+    if (!lojaAtualId) return; // Evita queries se a loja não estiver definida
+
     const { data, error } = await supabase
       .from('cash_sessions')
       .select('*')
+      .eq('loja_id', lojaAtualId) // Filtro Multiloja
       .eq('status', 'open')
       .order('id', { ascending: false })
       .limit(1)
@@ -90,15 +94,18 @@ export function CashRegisterPage() {
     }
 
     setOpenSession(data ?? null);
-  }, []);
+  }, [lojaAtualId]);
 
   const fetchHistoryByDate = useCallback(async () => {
+    if (!lojaAtualId) return; // Evita queries se a loja não estiver definida
+
     const start = `${historyDate}T00:00:00-03:00`;
     const end = `${historyDate}T23:59:59.999-03:00`;
 
     const { data, error } = await supabase
       .from('cash_sessions')
       .select('*')
+      .eq('loja_id', lojaAtualId) // Filtro Multiloja
       .eq('status', 'closed')
       .gte('closed_at', start)
       .lte('closed_at', end)
@@ -110,7 +117,7 @@ export function CashRegisterPage() {
     }
 
     setDailyClosings(data ?? []);
-  }, [historyDate]);
+  }, [historyDate, lojaAtualId]);
 
   useEffect(() => {
     fetchOpenSession();
@@ -169,6 +176,10 @@ export function CashRegisterPage() {
   }, [openingCash, totalReceivedCash, totalChangeGiven]);
 
   const handleOpenRegister = async () => {
+    if (!lojaAtualId) {
+      return toast.error('Loja não identificada no sistema.');
+    }
+
     const amount = parseMoneyInput(openingAmount);
 
     if (Number.isNaN(amount) || openingAmount.trim() === '') {
@@ -185,6 +196,7 @@ export function CashRegisterPage() {
       const { data: existingOpen, error: existingError } = await supabase
         .from('cash_sessions')
         .select('id')
+        .eq('loja_id', lojaAtualId) // Verifica sessão aberta apenas nesta loja
         .eq('status', 'open')
         .limit(1)
         .maybeSingle();
@@ -199,6 +211,7 @@ export function CashRegisterPage() {
 
       const { error } = await supabase.from('cash_sessions').insert([
         {
+          loja_id: lojaAtualId, // Injeta a loja atual na criação
           opened_by: user?.name || 'Operador',
           opening_amount: amount,
           notes: openingNotes || null,
@@ -225,7 +238,9 @@ export function CashRegisterPage() {
   };
 
   const handleCloseRegister = async (hasDifference: boolean) => {
-    if (!openSession) return toast.error('Nenhum caixa aberto encontrado.');
+    if (!openSession || !lojaAtualId) {
+      return toast.error('Nenhum caixa aberto encontrado.');
+    }
 
     const counted = parseMoneyInput(countedTotal);
 
@@ -263,6 +278,7 @@ export function CashRegisterPage() {
           notes: notes || (diff === 0 ? 'Fechamento exato.' : 'Fechamento com divergência.'),
           status: 'closed',
         })
+        .eq('loja_id', lojaAtualId) // Camada extra de segurança
         .eq('id', openSession.id);
 
       if (error) throw error;

@@ -51,6 +51,11 @@ function RootContent() {
 
   return (
     <>
+      {/* BLINDAGEM DE PERFORMANCE E SEGURANÇA: 
+        O AppProvider (que faz as leituras de loja, produtos e pedidos no Supabase) 
+        SÓ é injetado no sistema se o usuário estiver autenticado.
+        Isso impede conexões "fantasmas" no banco de dados enquanto o usuário está na tela de login.
+      */}
       {isAuthenticated ? (
         <AppProvider>
           <Outlet />

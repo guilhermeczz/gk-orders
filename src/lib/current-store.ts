@@ -1,14 +1,13 @@
-export const DEFAULT_LOJA_ID = '00000000-0000-0000-0000-000000000001';
-
 const CURRENT_STORE_KEY = 'gk_orders_current_store_id';
 const CURRENT_STORE_EVENT = 'gk-orders-current-store-changed';
 
-export function getCurrentStoreId() {
+// OTIMIZAÇÃO: Sem ID "chumbado" de fallback. Se não tem loja, é vazio. Segurança em 1º lugar.
+export function getCurrentStoreId(): string {
   if (typeof window === 'undefined') {
-    return DEFAULT_LOJA_ID;
+    return '';
   }
 
-  return localStorage.getItem(CURRENT_STORE_KEY) || DEFAULT_LOJA_ID;
+  return localStorage.getItem(CURRENT_STORE_KEY) || '';
 }
 
 export function setCurrentStoreId(lojaId: string) {
@@ -33,7 +32,7 @@ export function clearCurrentStoreId() {
   window.dispatchEvent(
     new CustomEvent(CURRENT_STORE_EVENT, {
       detail: {
-        lojaId: DEFAULT_LOJA_ID,
+        lojaId: '',
       },
     })
   );
@@ -49,9 +48,10 @@ export function subscribeToCurrentStoreChange(callback: (lojaId: string) => void
     callback(customEvent.detail?.lojaId || getCurrentStoreId());
   };
 
+  // Mantém abas diferentes do navegador sincronizadas
   const handleStorageEvent = (event: StorageEvent) => {
     if (event.key === CURRENT_STORE_KEY) {
-      callback(event.newValue || DEFAULT_LOJA_ID);
+      callback(event.newValue || '');
     }
   };
 

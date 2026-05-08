@@ -39,14 +39,15 @@
 }
 
 @layer utilities {
-  .text-primary { color: #ff6a00 !important; }
-  .bg-primary { background-color: #ff6a00 !important; color: #000000 !important; }
-  .border-primary { border-color: #ff6a00 !important; }
+  /* Ensinamos o Tailwind a usar nossa variável de cor dinâmica */
+  .text-primary { color: hsl(var(--primary)) !important; }
+  .bg-primary { background-color: hsl(var(--primary)) !important; color: #000000 !important; }
+  .border-primary { border-color: hsl(var(--primary)) !important; }
   
-  /* Efeito de brilho (glow) no laranja ao passar o mouse */
-  .hover\:bg-primary\/90:hover { 
-    background-color: #e65f00 !important; 
-    box-shadow: 0 0 15px rgba(255, 106, 0, 0.4) !important;
+  /* Efeito de brilho (glow) dinâmico usando a cor primária ativa */
+  .hover\:bg-primary\/90:hover, .hover\:bg-primary:hover { 
+    background-color: hsl(var(--primary) / 0.9) !important; 
+    box-shadow: 0 0 15px hsl(var(--primary) / 0.4) !important;
     transform: translateY(-2px);
   }
 

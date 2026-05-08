@@ -111,7 +111,8 @@ function getOrderStatusInfo(order: any) {
 }
 
 export function ReportsPage() {
-  const { getArchivedOrders } = useAppStore();
+  // ADICIONADO: Extraído o lojaAtualId para garantir o isolamento
+  const { getArchivedOrders, lojaAtualId } = useAppStore();
 
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -121,7 +122,12 @@ export function ReportsPage() {
 
   const [endDate, setEndDate] = useState(() => toInputDate(new Date()));
 
+  // =========================================================================
+  // OTIMIZAÇÃO: Bloqueia a consulta se não tiver loja selecionada
+  // =========================================================================
   const orders = useMemo(() => {
+    if (!lojaAtualId) return [];
+
     const startBase = fromInputDate(startDate);
     const endBase = fromInputDate(endDate);
 
@@ -146,7 +152,7 @@ export function ReportsPage() {
     );
 
     return getArchivedOrders(start, end);
-  }, [startDate, endDate, getArchivedOrders]);
+  }, [startDate, endDate, getArchivedOrders, lojaAtualId]);
 
   const paidOrders = useMemo(
     () => orders.filter((o) => o.status === 'paid' || o.paid),
@@ -464,7 +470,7 @@ export function ReportsPage() {
                           className="h-full flex flex-col items-center justify-end flex-1 group z-10"
                         >
                           <div
-                            className="w-full max-w-[60px] bg-primary rounded-t-lg transition-all duration-700 shadow-[0_0_10px_rgba(255,106,0,0.2)] group-hover:shadow-[0_0_15px_rgba(255,106,0,0.5)] group-hover:brightness-110 relative flex justify-center"
+                            className="w-full max-w-[60px] bg-primary rounded-t-lg transition-all duration-700 shadow-[0_0_10px_rgba(var(--primary),0.2)] group-hover:shadow-[0_0_15px_rgba(var(--primary),0.5)] group-hover:brightness-110 relative flex justify-center"
                             style={{ height: `${Math.max(heightPercent, 5)}%` }}
                           >
                             <div className="absolute -top-10 opacity-0 group-hover:opacity-100 transition-all duration-300 transform group-hover:-translate-y-1 bg-black border border-gray-800 text-white text-xs font-bold py-1.5 px-3 rounded-lg whitespace-nowrap shadow-xl pointer-events-none z-50">

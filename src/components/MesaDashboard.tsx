@@ -10,6 +10,8 @@ import {
   LayoutGrid,
   Pencil,
   Trash2,
+  Printer,
+  Receipt,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -19,6 +21,7 @@ import { useAppStore } from '@/lib/store';
 import { supabase } from '@/lib/supabase';
 import type { Mesa, Order, OrderBatch, OrderItem } from '@/lib/types';
 import { NewOrderModal } from './NewOrderModal';
+import { useAuth } from '@/lib/auth';
 
 const removerAcentos = (str: string) => {
   return String(str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -56,7 +59,6 @@ function orderItemsToCart(order: Order) {
       acc[String(item.productId)] =
         (acc[String(item.productId)] || 0) + Number(item.quantity || 0);
     }
-
     return acc;
   }, {});
 }
@@ -97,7 +99,10 @@ export function MesaDashboard() {
     updateMesa,
     updateOrderItem,
     deleteOrderItem,
+    lojaAtualId,
   } = useAppStore();
+
+  const { user } = useAuth();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMesa, setSelectedMesa] = useState<Mesa | null>(null);
@@ -134,54 +139,62 @@ export function MesaDashboard() {
     mesa: Mesa;
     orders: Order[];
     total: number;
+    comandaNome?: string;
   } | null>(null);
 
   const retiradaOrders = useMemo(() => {
     return orders
       .filter((order) => {
-        const tipo = processarNota(order.notes || '').tipo;
-        return !order.mesaId && order.status !== 'paid' && tipo === 'RETIRADA';
+        if (lojaAtualId && String(order.loja_id) !== String(lojaAtualId)) return false;
+        if (order.mesaId || order.status === 'paid') return false;
+        
+        return /\[RETIRADA\]/i.test(order.notes || '');
       })
       .sort(
         (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
       );
-  }, [orders]);
+  }, [orders, lojaAtualId]);
+
+  const activeOrdersByMesa = useMemo(() => {
+    const map = new Map<string, Order[]>();
+    orders.forEach((order) => {
+      if (order.status === 'paid') return;
+      if (lojaAtualId && String(order.loja_id) !== String(lojaAtualId)) return;
+      if (!order.mesaId) return;
+
+      const mid = String(order.mesaId);
+      if (!map.has(mid)) map.set(mid, []);
+      map.get(mid)!.push(order);
+    });
+    return map;
+  }, [orders, lojaAtualId]);
 
   const mesasComResumo = useMemo(() => {
     return mesas
+      .filter((mesa) => !lojaAtualId || String(mesa.loja_id) === String(lojaAtualId))
       .map((mesa) => {
-        const mesaOrders = orders.filter(
-          (order) =>
-            String(order.mesaId) === String(mesa.id) && order.status !== 'paid'
-        );
+        const mesaOrders = activeOrdersByMesa.get(String(mesa.id)) || [];
 
-        const total = mesaOrders.reduce(
-          (sum, order) => sum + Number(order.total || 0),
-          0
-        );
+        let total = 0;
+        let totalItens = 0;
 
-        const totalItens = mesaOrders.reduce(
-          (sum, order) =>
-            sum +
-            (order.items ?? []).reduce(
-              (acc, item) => acc + Number(item.quantity || 0),
-              0
-            ),
-          0
-        );
-
-        const isOccupied = mesaOrders.length > 0;
+        mesaOrders.forEach(order => {
+          total += Number(order.total || 0);
+          (order.items ?? []).forEach(item => {
+            totalItens += Number(item.quantity || 0);
+          });
+        });
 
         return {
           mesa,
           orders: mesaOrders,
           total,
           totalItens,
-          isOccupied,
+          isOccupied: mesaOrders.length > 0,
         };
       })
       .sort((a, b) => a.mesa.numero - b.mesa.numero);
-  }, [mesas, orders]);
+  }, [mesas, activeOrdersByMesa, lojaAtualId]);
 
   const filteredMesas = useMemo(() => {
     const q = removerAcentos(searchTerm.trim().toLowerCase());
@@ -217,16 +230,12 @@ export function MesaDashboard() {
 
   const selectedMesaOrders = useMemo(() => {
     if (!selectedMesa) return [];
-
-    return orders
-      .filter(
-        (order) =>
-          String(order.mesaId) === String(selectedMesa.id) && order.status !== 'paid'
-      )
-      .sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      );
-  }, [orders, selectedMesa]);
+    
+    const mOrders = activeOrdersByMesa.get(String(selectedMesa.id)) || [];
+    return [...mOrders].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    );
+  }, [selectedMesa, activeOrdersByMesa]);
 
   const selectedMesaTotal = useMemo(
     () => selectedMesaOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
@@ -245,12 +254,13 @@ export function MesaDashboard() {
 
     return orders.filter((order) => {
       return (
+        (!lojaAtualId || String(order.loja_id) === String(lojaAtualId)) &&
         order.status === 'paid' &&
         String(order.paymentMethod || '').toLowerCase() === 'dinheiro' &&
         Number(order.cashSessionId) === Number(openSession.id)
       );
     });
-  }, [orders, openSession]);
+  }, [orders, openSession, lojaAtualId]);
 
   const availableCashForChange = useMemo(() => {
     const openingAmount = Number(openSession?.opening_amount || 0);
@@ -288,11 +298,15 @@ export function MesaDashboard() {
     !hasInsufficientChange;
 
   React.useEffect(() => {
+    const isPaying = cashTarget || payTarget || mesaPaymentTarget;
+    if (!isPaying || !lojaAtualId) return;
+
     const fetchOpenSession = async () => {
       const { data, error } = await supabase
         .from('cash_sessions')
         .select('*')
         .eq('status', 'open')
+        .eq('loja_id', lojaAtualId)
         .order('id', { ascending: false })
         .limit(1)
         .maybeSingle();
@@ -302,27 +316,28 @@ export function MesaDashboard() {
         setOpenSession(null);
         return;
       }
-
       setOpenSession(data ?? null);
     };
 
     fetchOpenSession();
-  }, [cashTarget, payTarget, mesaPaymentTarget, orders]);
+  }, [cashTarget, payTarget, mesaPaymentTarget, lojaAtualId]);
 
   const handleOpenMesa = (mesa: Mesa) => {
     setSelectedMesa(mesa);
   };
 
-  const handleFinalizeMesa = () => {
-    if (!selectedMesa || !selectedMesaOrders.length) {
-      toast.error('Essa mesa não possui consumo em aberto.');
+  // NOVA LÓGICA: Pagamento pode ser da mesa toda ou de uma comanda específica
+  const handleFinalizePagamento = (ordersToPay: Order[], totalToPay: number, comandaNome?: string) => {
+    if (!ordersToPay.length) {
+      toast.error('Não há pedidos em aberto para pagar.');
       return;
     }
 
     setMesaPaymentTarget({
-      mesa: selectedMesa,
-      orders: selectedMesaOrders,
-      total: selectedMesaTotal,
+      mesa: selectedMesa!,
+      orders: ordersToPay,
+      total: totalToPay,
+      comandaNome,
     });
   };
 
@@ -514,7 +529,11 @@ export function MesaDashboard() {
         open={createMesaOpen}
         onClose={() => setCreateMesaOpen(false)}
         onSubmit={async (data) => {
-          const ok = await addMesa(data);
+          if (!lojaAtualId) {
+            toast.error('Erro de contexto: Loja não identificada.');
+            return;
+          }
+          const ok = await addMesa({ ...data, loja_id: lojaAtualId });
           if (ok) setCreateMesaOpen(false);
         }}
       />
@@ -523,7 +542,11 @@ export function MesaDashboard() {
         open={createManyOpen}
         onClose={() => setCreateManyOpen(false)}
         onSubmit={async (data) => {
-          const ok = await addMesasEmLote(data);
+          if (!lojaAtualId) {
+            toast.error('Erro de contexto: Loja não identificada.');
+            return;
+          }
+          const ok = await addMesasEmLote({ ...data, loja_id: lojaAtualId });
           if (ok) setCreateManyOpen(false);
         }}
       />
@@ -566,7 +589,7 @@ export function MesaDashboard() {
             setDeleteMesaTarget(selectedMesa);
             setSelectedMesa(null);
           }}
-          onFinalize={handleFinalizeMesa}
+          onFinalize={(ordersToPay, totalToPay, nome) => handleFinalizePagamento(ordersToPay, totalToPay, nome)}
           onEditItem={(order: Order, item: OrderItem) => {
             setEditingItem({ order, item });
           }}
@@ -752,6 +775,19 @@ export function MesaDashboard() {
               <button
                 className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold transition-all"
                 onClick={async () => {
+                  const hasOpenOrders = orders.some(
+                    (o) =>
+                      String(o.mesaId) === String(deleteMesaTarget.id) &&
+                      o.status !== 'paid' &&
+                      (!lojaAtualId || String(o.loja_id) === String(lojaAtualId))
+                  );
+
+                  if (hasOpenOrders) {
+                    toast.error('Não é possível excluir uma mesa com pedidos em aberto.');
+                    setDeleteMesaTarget(null);
+                    return;
+                  }
+
                   await deleteMesa(deleteMesaTarget.id);
                   setDeleteMesaTarget(null);
                 }}
@@ -767,24 +803,24 @@ export function MesaDashboard() {
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[999] print:hidden">
           <div
             style={{ backgroundColor: '#111', color: '#fff' }}
-            className="p-8 rounded-3xl shadow-[0_0_50px_rgba(255,106,0,0.15)] max-w-md w-full mx-4 border border-gray-800 animate-slide-up"
+            className="p-8 rounded-3xl shadow-[0_0_50px_rgba(var(--primary),0.15)] max-w-md w-full mx-4 border border-gray-800 animate-slide-up"
           >
             <div className="flex flex-col items-center mb-6 border-b border-gray-800 pb-6">
               <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 border border-primary/20">
                 <CreditCard className="w-8 h-8 text-primary" />
               </div>
               <h3 className="text-xl font-black text-center mb-1">
-                Finalizar Mesa {mesaPaymentTarget.mesa.numero}
+                Finalizar {mesaPaymentTarget.comandaNome ? `Comanda: ${mesaPaymentTarget.comandaNome}` : `Mesa ${mesaPaymentTarget.mesa.numero}`}
               </h3>
               <p className="text-muted-foreground text-sm">
-                {mesaPaymentTarget.orders.length} pedido(s) em aberto
+                {mesaPaymentTarget.orders.length} pedido(s) selecionado(s)
               </p>
               <p className="text-3xl font-black text-white mt-4 tracking-tight">
                 {formatMoney(mesaPaymentTarget.total)}
               </p>
             </div>
 
-            <div className="space-y-3 mb-6">
+            <div className="space-y-3 mb-6 max-h-[30vh] overflow-y-auto pr-2">
               {mesaPaymentTarget.orders.map((order) => (
                 <div
                   key={order.id}
@@ -828,7 +864,7 @@ export function MesaDashboard() {
                     'pix'
                   );
                   setMesaPaymentTarget(null);
-                  setSelectedMesa(null);
+                  if (!mesaPaymentTarget.comandaNome) setSelectedMesa(null);
                 }}
                 className="py-4 flex flex-col items-center justify-center gap-2 bg-gray-900 border border-gray-800 hover:border-teal-500/50 hover:bg-teal-500/10 hover:text-teal-500 rounded-2xl font-black transition-all"
               >
@@ -842,7 +878,7 @@ export function MesaDashboard() {
                     'credito'
                   );
                   setMesaPaymentTarget(null);
-                  setSelectedMesa(null);
+                  if (!mesaPaymentTarget.comandaNome) setSelectedMesa(null);
                 }}
                 className="py-4 flex flex-col items-center justify-center gap-2 bg-gray-900 border border-gray-800 hover:border-blue-500/50 hover:bg-blue-500/10 hover:text-blue-500 rounded-2xl font-black transition-all"
               >
@@ -856,7 +892,7 @@ export function MesaDashboard() {
                     'debito'
                   );
                   setMesaPaymentTarget(null);
-                  setSelectedMesa(null);
+                  if (!mesaPaymentTarget.comandaNome) setSelectedMesa(null);
                 }}
                 className="py-4 flex flex-col items-center justify-center gap-2 bg-gray-900 border border-gray-800 hover:border-purple-500/50 hover:bg-purple-500/10 hover:text-purple-500 rounded-2xl font-black transition-all"
               >
@@ -878,7 +914,7 @@ export function MesaDashboard() {
         <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-[999] print:hidden">
           <div
             style={{ backgroundColor: '#111', color: '#fff' }}
-            className="p-8 rounded-3xl shadow-[0_0_50px_rgba(255,106,0,0.15)] max-w-sm w-full mx-4 border border-gray-800 animate-slide-up"
+            className="p-8 rounded-3xl shadow-[0_0_50px_rgba(var(--primary),0.15)] max-w-sm w-full mx-4 border border-gray-800 animate-slide-up"
           >
             <div className="flex flex-col items-center mb-6 border-b border-gray-800 pb-6">
               <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-4 border border-primary/20">
@@ -969,7 +1005,7 @@ export function MesaDashboard() {
 
                 <div className="mt-4 flex items-end justify-between gap-3">
                   <div>
-                    <p className="text-sm text-muted-foreground">Total do pedido</p>
+                    <p className="text-sm text-muted-foreground">Total a pagar</p>
                     <p className="text-3xl font-black text-white">
                       R$ {cashTarget.total.toFixed(2)}
                     </p>
@@ -1041,7 +1077,7 @@ export function MesaDashboard() {
 
                 {cashReceived && cashChange < 0 && (
                   <p className="text-xs text-red-400 font-medium">
-                    O valor recebido é menor que o total do pedido.
+                    O valor recebido é menor que o total da conta.
                   </p>
                 )}
 
@@ -1090,7 +1126,7 @@ export function MesaDashboard() {
                       );
 
                       setMesaPaymentTarget(null);
-                      setSelectedMesa(null);
+                      if (!mesaPaymentTarget.comandaNome) setSelectedMesa(null);
                     } else if (cashTarget) {
                       await payOrder(cashTarget.id, 'dinheiro', {
                         amountReceived: cashReceivedValue,
@@ -1123,7 +1159,7 @@ function CreateMesaModal({
 }: {
   open: boolean;
   onClose: () => void;
-  onSubmit: (data: { numero: number; nome?: string; garcomNome?: string }) => void;
+  onSubmit: (data: { numero: number; nome?: string; garcomNome?: string; loja_id?: string }) => void;
 }) {
   const [numero, setNumero] = useState('');
   const [nome, setNome] = useState('');
@@ -1220,6 +1256,7 @@ function CreateManyMesasModal({
     final: number;
     prefixoNome?: string;
     garcomNome?: string;
+    loja_id?: string;
   }) => void;
 }) {
   const [inicial, setInicial] = useState('');
@@ -1431,6 +1468,9 @@ function RetiradaCard({
   onDelete: () => void;
   onFinalize: () => void;
 }) {
+  const { user } = useAuth();
+  const podePagar = user?.perfil === 'admin_loja' || user?.isDeveloper;
+
   const batches: OrderBatch[] =
     Array.isArray(order.itemBatches) && order.itemBatches.length > 0
       ? order.itemBatches
@@ -1540,14 +1580,16 @@ function RetiradaCard({
             Excluir
           </button>
 
-          <button
-            type="button"
-            onClick={onFinalize}
-            className="flex items-center gap-2 text-xs font-black px-3 py-2 bg-green-600 text-white rounded-md"
-          >
-            <CreditCard className="w-4 h-4" />
-            Finalizar
-          </button>
+          {podePagar && (
+            <button
+              type="button"
+              onClick={onFinalize}
+              className="flex items-center gap-2 text-xs font-black px-3 py-2 bg-green-600 text-white rounded-md"
+            >
+              <CreditCard className="w-4 h-4" />
+              Finalizar
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -1575,10 +1617,15 @@ function MesaDetailsModal({
   onOpenOrder: () => void;
   onEditMesa: () => void;
   onDeleteMesa: () => void;
-  onFinalize: () => void;
+  onFinalize: (orders: Order[], total: number, comandaNome?: string) => void;
   onEditItem: (order: Order, item: OrderItem) => void;
   onDeleteItem: (order: Order, item: OrderItem) => void;
 }) {
+  const { user } = useAuth();
+  const podePagar = user?.perfil === 'admin_loja' || user?.isDeveloper;
+
+  const [printModalOpen, setPrintModalOpen] = useState(false);
+
   const isOccupied = orders.length > 0;
 
   const totalItensMesa = orders.reduce((sum, order) => {
@@ -1588,278 +1635,363 @@ function MesaDetailsModal({
     );
   }, 0);
 
+  // AGRUPA AS COMANDAS PELO NOME DO CLIENTE
+  const comandas = useMemo(() => {
+    const groups = new Map<string, Order[]>();
+    
+    orders.forEach((o) => {
+      // Se não tiver nome, agrupa no nome da mesa
+      const nomeComanda = o.customerName || `Mesa ${mesa.numero}`;
+      if (!groups.has(nomeComanda)) groups.set(nomeComanda, []);
+      groups.get(nomeComanda)!.push(o);
+    });
+
+    return Array.from(groups.entries()).map(([nome, ped]) => ({
+      nome,
+      orders: ped,
+      total: ped.reduce((sum, p) => sum + Number(p.total || 0), 0),
+    }));
+  }, [orders, mesa.numero]);
+
+  const handlePrintConta = (alvo: string) => {
+    // Isso pode ser integrado com a sua impressora (Bluetooth, USB, ou API)
+    toast.success(`Conta de ${alvo} enviada para impressão!`);
+    setPrintModalOpen(false);
+  };
+
   return (
-    <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/90 p-2 sm:p-4 print:hidden">
-      <div className="flex w-full max-w-4xl max-h-[94dvh] sm:max-h-[92vh] flex-col overflow-hidden rounded-3xl border border-gray-800 bg-[#111] text-white shadow-2xl">
-        <div className="shrink-0 flex items-center justify-between border-b border-gray-800 p-3 sm:p-6">
-          <div>
-            <p className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-gray-400">
-              Detalhes da Mesa
-            </p>
-
-            <h3 className="mt-0.5 sm:mt-1 text-2xl sm:text-3xl font-black">
-              Mesa {mesa.numero}
-            </h3>
-
-            <p className="mt-0.5 sm:mt-1 text-xs sm:text-sm text-gray-400">
-              Garçom:{' '}
-              <span className="font-bold text-white">
-                {mesa.garcomNome || 'Não definido'}
-              </span>
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-2 transition-colors hover:bg-gray-800"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        <div className="shrink-0 border-b border-gray-800 p-3 sm:p-6">
-          <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
-            <InfoCard
-              label="Status"
-              value={isOccupied ? 'Ocupada' : 'Livre'}
-              highlight={isOccupied ? 'warning' : 'success'}
-            />
-            <InfoCard label="Pedidos" value={String(orders.length)} />
-            <InfoCard label="Itens" value={String(totalItensMesa)} />
-            <InfoCard label="Total" value={formatMoney(total)} highlight="primary" />
-          </div>
-        </div>
-
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6">
-          {!isOccupied ? (
-            <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-8 text-center">
-              <UtensilsCrossed className="mx-auto mb-3 h-10 w-10 text-gray-500" />
-              <p className="text-lg font-bold">Mesa livre</p>
-              <p className="mt-1 mb-5 text-sm text-gray-400">
-                Ainda não há consumo lançado nesta mesa.
+    <>
+      <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/90 p-2 sm:p-4 print:hidden">
+        <div className="flex w-full max-w-4xl max-h-[94dvh] sm:max-h-[92vh] flex-col overflow-hidden rounded-3xl border border-gray-800 bg-[#111] text-white shadow-2xl">
+          <div className="shrink-0 flex items-center justify-between border-b border-gray-800 p-3 sm:p-6">
+            <div>
+              <p className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-gray-400">
+                Detalhes da Mesa
               </p>
 
-              <button
-                type="button"
-                onClick={onOpenOrder}
-                className="rounded-xl bg-primary px-5 py-3 font-black text-primary-foreground"
-              >
-                Abrir pedido na mesa
-              </button>
+              <h3 className="mt-0.5 sm:mt-1 text-2xl sm:text-3xl font-black">
+                Mesa {mesa.numero}
+              </h3>
+
+              <p className="mt-0.5 sm:mt-1 text-xs sm:text-sm text-gray-400">
+                Garçom:{' '}
+                <span className="font-bold text-white">
+                  {mesa.garcomNome || 'Não definido'}
+                </span>
+              </p>
             </div>
-          ) : (
-            <div className="space-y-3 sm:space-y-4">
-              {orders.map((order: Order) => (
-                <div
-                  key={order.id}
-                  className="rounded-2xl border border-gray-800 bg-gray-900/60 p-3 sm:p-4"
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-xl p-2 transition-colors hover:bg-gray-800"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="shrink-0 border-b border-gray-800 p-3 sm:p-6">
+            <div className="grid grid-cols-2 gap-2 sm:gap-3 md:grid-cols-4">
+              <InfoCard
+                label="Status"
+                value={isOccupied ? 'Ocupada' : 'Livre'}
+                highlight={isOccupied ? 'warning' : 'success'}
+              />
+              <InfoCard label="Comandas" value={String(comandas.length)} />
+              <InfoCard label="Itens" value={String(totalItensMesa)} />
+              <InfoCard label="Total Geral" value={formatMoney(total)} highlight="primary" />
+            </div>
+          </div>
+
+          <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-6 custom-scrollbar">
+            {!isOccupied ? (
+              <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-8 text-center">
+                <UtensilsCrossed className="mx-auto mb-3 h-10 w-10 text-gray-500" />
+                <p className="text-lg font-bold">Mesa livre</p>
+                <p className="mt-1 mb-5 text-sm text-gray-400">
+                  Ainda não há consumo lançado nesta mesa.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={onOpenOrder}
+                  className="rounded-xl bg-primary px-5 py-3 font-black text-primary-foreground"
                 >
-                  <div className="mb-3 sm:mb-4 flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                        Pedido #{String(order.number).padStart(4, '0')}
-                      </p>
-
-                      <p className="mt-1 text-base sm:text-lg font-black">
-                        {order.customerName || `Mesa ${mesa.numero}`}
-                      </p>
-
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {order.createdBy && (
-                          <span className="rounded-md border border-gray-700 bg-black/30 px-2 py-1 text-[11px] font-bold text-gray-300">
-                            por {order.createdBy}
-                          </span>
-                        )}
-
-                        <span className="rounded-md border border-gray-700 bg-black/30 px-2 py-1 text-[11px] font-bold text-gray-300">
-                          {format(new Date(order.createdAt), 'dd/MM HH:mm', {
-                            locale: ptBR,
-                          })}
-                        </span>
+                  Abrir pedido na mesa
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                {comandas.map((comanda) => (
+                  <div key={comanda.nome} className="rounded-2xl border border-gray-800 bg-gray-900/40 overflow-hidden">
+                    <div className="bg-gray-800/40 p-4 flex flex-wrap gap-3 justify-between items-center border-b border-gray-800">
+                      <div>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Comanda</p>
+                        <p className="text-lg sm:text-xl font-black text-white">{comanda.nome}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Total Comanda</p>
+                        <p className="text-lg sm:text-xl font-black text-primary">{formatMoney(comanda.total)}</p>
                       </div>
                     </div>
-                  </div>
+                    
+                    <div className="p-4 space-y-4">
+                      {comanda.orders.map((order: Order) => (
+                        <div key={order.id} className="space-y-3">
+                          {(order.itemBatches ?? []).map((batch: OrderBatch, index: number) => {
+                            const batchLabel = batch.isAdditional
+                              ? `Adição ${index}`
+                              : `Pedido principal #${String(order.number).padStart(4, '0')}`;
 
-                  <div className="space-y-3">
-                    {(order.itemBatches ?? []).map((batch: OrderBatch, index: number) => {
-                      const batchLabel = batch.isAdditional
-                        ? `Adição ${index}`
-                        : 'Pedido principal';
+                            const obs = processarNota(batch.notes || '').textoObs;
 
-                      const obs = processarNota(batch.notes || '').textoObs;
-
-                      return (
-                        <div
-                          key={batch.id}
-                          className="rounded-xl border border-gray-800 bg-black/20 p-3"
-                        >
-                          <div className="mb-2 flex items-center justify-between gap-3">
-                            <div>
-                              <p className="text-xs font-black uppercase tracking-wider text-primary">
-                                {batchLabel}
-                              </p>
-                              <p className="text-[11px] text-gray-400">
-                                {format(new Date(batch.createdAt), 'HH:mm', {
-                                  locale: ptBR,
-                                })}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            {batch.items.map((item: OrderItem, idx: number) => {
-                              const itemAdditions = item.additions ?? [];
-                              const itemTotal = getItemTotal(item);
-
-                              return (
-                                <div
-                                  key={`${batch.id}-${idx}-${item.id ?? item.productId}`}
-                                  className="rounded-2xl border border-gray-800 bg-[#121212] p-3 text-sm"
-                                >
-                                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                    <div className="min-w-0 flex-1">
-                                      <div className="flex items-start gap-2">
-                                        <span className="shrink-0 font-black text-primary">
-                                          {item.quantity}x
-                                        </span>
-
-                                        <div className="min-w-0">
-                                          <p className="break-words font-bold leading-snug text-white">
-                                            {item.productName}
-                                          </p>
-
-                                          {itemAdditions.length > 0 && (
-                                            <div className="mt-2 space-y-1 rounded-xl border border-gray-800 bg-black/25 p-2">
-                                              {itemAdditions.map((addition) => (
-                                                <p
-                                                  key={`${item.id ?? item.productId}-${addition.productId}`}
-                                                  className="text-xs font-bold leading-relaxed text-gray-300"
-                                                >
-                                                  <span className="text-primary">+</span>{' '}
-                                                  {addition.quantity}x {addition.productName}
-                                                  <span className="ml-1 text-gray-500">
-                                                    ({formatMoney(addition.quantity * addition.unitPrice)})
-                                                  </span>
-                                                </p>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-
-                                    <div className="flex items-center justify-between gap-3 sm:justify-end">
-                                      <span className="shrink-0 rounded-xl border border-gray-800 bg-black/30 px-3 py-2 text-base font-black text-white">
-                                        {formatMoney(itemTotal)}
-                                      </span>
-
-                                      <div className="flex shrink-0 gap-2">
-                                        <button
-                                          type="button"
-                                          onClick={() => onEditItem(order, item)}
-                                          className="flex h-11 w-11 items-center justify-center rounded-xl border border-blue-500/30 bg-blue-500/10 text-blue-400 transition-all active:scale-95"
-                                          title="Editar item"
-                                        >
-                                          <Pencil className="h-5 w-5" />
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={() => onDeleteItem(order, item)}
-                                          className="flex h-11 w-11 items-center justify-center rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 transition-all active:scale-95"
-                                          title="Excluir item"
-                                        >
-                                          <Trash2 className="h-5 w-5" />
-                                        </button>
-                                      </div>
-                                    </div>
+                            return (
+                              <div key={batch.id} className="rounded-xl border border-gray-800 bg-black/40 p-3">
+                                <div className="mb-2 flex items-center justify-between gap-3">
+                                  <div>
+                                    <p className="text-xs font-black uppercase tracking-wider text-primary">
+                                      {batchLabel}
+                                    </p>
+                                    <p className="text-[11px] text-gray-400">
+                                      {format(new Date(batch.createdAt), 'HH:mm', { locale: ptBR })}
+                                      {order.createdBy ? ` • por ${order.createdBy}` : ''}
+                                    </p>
                                   </div>
                                 </div>
-                              );
-                            })}
-                          </div>
 
-                          {obs && (
-                            <div className="mt-2 rounded-lg border-l-2 border-gray-600 bg-gray-800/50 p-2 text-xs italic text-gray-300">
-                              {obs}
-                            </div>
-                          )}
+                                <div className="space-y-2">
+                                  {batch.items.map((item: OrderItem, idx: number) => {
+                                    const itemAdditions = item.additions ?? [];
+                                    const itemTotal = getItemTotal(item);
+
+                                    return (
+                                      <div
+                                        key={`${batch.id}-${idx}-${item.id ?? item.productId}`}
+                                        className="rounded-xl bg-[#151515] p-3 text-sm"
+                                      >
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                          <div className="min-w-0 flex-1">
+                                            <div className="flex items-start gap-2">
+                                              <span className="shrink-0 font-black text-white bg-white/10 px-1.5 py-0.5 rounded text-xs">
+                                                {item.quantity}x
+                                              </span>
+
+                                              <div className="min-w-0">
+                                                <p className="break-words font-bold leading-snug text-white">
+                                                  {item.productName}
+                                                </p>
+
+                                                {itemAdditions.length > 0 && (
+                                                  <div className="mt-1 space-y-0.5 pl-1 border-l-2 border-gray-700">
+                                                    {itemAdditions.map((addition) => (
+                                                      <p
+                                                        key={`${item.id ?? item.productId}-${addition.productId}`}
+                                                        className="text-[11px] font-bold text-gray-400"
+                                                      >
+                                                        + {addition.quantity}x {addition.productName}
+                                                      </p>
+                                                    ))}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          <div className="flex items-center justify-between gap-3 sm:justify-end">
+                                            <span className="shrink-0 text-sm font-black text-white">
+                                              {formatMoney(itemTotal)}
+                                            </span>
+
+                                            <div className="flex shrink-0 gap-1.5">
+                                              <button
+                                                type="button"
+                                                onClick={() => onEditItem(order, item)}
+                                                className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400 transition-all hover:bg-blue-500/20 active:scale-95"
+                                                title="Editar item"
+                                              >
+                                                <Pencil className="h-4 w-4" />
+                                              </button>
+
+                                              <button
+                                                type="button"
+                                                onClick={() => onDeleteItem(order, item)}
+                                                className="flex h-8 w-8 items-center justify-center rounded-lg bg-red-500/10 text-red-400 transition-all hover:bg-red-500/20 active:scale-95"
+                                                title="Excluir item"
+                                              >
+                                                <Trash2 className="h-4 w-4" />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+
+                                {obs && (
+                                  <div className="mt-2 rounded-lg border-l-2 border-amber-500/50 bg-amber-500/10 p-2 text-xs font-medium italic text-amber-200/80">
+                                    {obs}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
+                      ))}
+                    </div>
+
+                    <div className="p-3 border-t border-gray-800 flex gap-2 justify-end bg-black/20">
+                      <button
+                        type="button"
+                        onClick={() => handlePrintConta(comanda.nome)}
+                        className="rounded-xl border border-gray-700 bg-gray-800 px-4 py-2 text-sm font-bold text-white hover:bg-gray-700 flex items-center gap-2 transition-all active:scale-95"
+                      >
+                        <Receipt className="w-4 h-4" />
+                        Imprimir Parcial
+                      </button>
+
+                      {podePagar && (
+                        <button
+                          type="button"
+                          onClick={() => onFinalize(comanda.orders, comanda.total, comanda.nome)}
+                          className="rounded-xl bg-green-600 px-4 py-2 text-sm font-black text-white flex items-center gap-2 hover:bg-green-500 transition-all active:scale-95 shadow-[0_0_15px_rgba(34,197,94,0.15)]"
+                        >
+                          <CreditCard className="w-4 h-4" />
+                          Cobrar {comanda.nome}
+                        </button>
+                      )}
+                    </div>
                   </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-                  <div className="mt-4 flex items-center justify-between border-t border-gray-800 pt-4">
-                    <p className="text-sm text-gray-400">Total do pedido</p>
-                    <p className="text-lg font-black">{formatMoney(order.total)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          <div className="shrink-0 border-t border-gray-800 p-3 sm:p-6 bg-[#0a0a0a]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs sm:text-sm text-gray-400">Total Geral da mesa</p>
+                <p className="text-2xl sm:text-3xl font-black">{formatMoney(total)}</p>
+              </div>
 
-        <div className="shrink-0 border-t border-gray-800 p-3 sm:p-6">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <p className="text-xs sm:text-sm text-gray-400">Total da mesa</p>
-              <p className="text-2xl sm:text-3xl font-black">{formatMoney(total)}</p>
-            </div>
+              <div className="flex flex-wrap gap-2 sm:gap-3">
+                {!isOccupied && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={onOpenOrder}
+                      className="rounded-xl bg-primary px-4 py-2.5 sm:px-4 sm:py-3 text-sm sm:text-base font-black text-primary-foreground"
+                    >
+                      Abrir pedido
+                    </button>
 
-            <div className="flex flex-wrap gap-2 sm:gap-3">
-              {!isOccupied && (
-                <>
-                  <button
-                    type="button"
-                    onClick={onOpenOrder}
-                    className="rounded-xl bg-primary px-4 py-2.5 sm:px-4 sm:py-3 text-sm sm:text-base font-black text-primary-foreground"
-                  >
-                    Abrir pedido
-                  </button>
+                    {podePagar && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={onEditMesa}
+                          className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 sm:px-4 sm:py-3 text-sm sm:text-base font-bold text-blue-400"
+                        >
+                          Editar mesa
+                        </button>
 
-                  <button
-                    type="button"
-                    onClick={onEditMesa}
-                    className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2.5 sm:px-4 sm:py-3 text-sm sm:text-base font-bold text-blue-400"
-                  >
-                    Editar mesa
-                  </button>
+                        <button
+                          type="button"
+                          onClick={onDeleteMesa}
+                          className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 sm:px-4 sm:py-3 text-sm sm:text-base font-bold text-red-400"
+                        >
+                          Excluir mesa
+                        </button>
+                      </>
+                    )}
+                  </>
+                )}
 
-                  <button
-                    type="button"
-                    onClick={onDeleteMesa}
-                    className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2.5 sm:px-4 sm:py-3 text-sm sm:text-base font-bold text-red-400"
-                  >
-                    Excluir mesa
-                  </button>
-                </>
-              )}
+                {isOccupied && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setPrintModalOpen(true)}
+                      className="rounded-xl border border-gray-700 bg-gray-800 px-4 py-2.5 sm:px-5 sm:py-3 text-sm sm:text-base font-bold text-white transition-colors hover:bg-gray-700 flex items-center gap-2"
+                    >
+                      <Printer className="w-5 h-5" />
+                      Imprimir Conta
+                    </button>
 
-              {isOccupied && (
-                <>
-                  <button
-                    type="button"
-                    onClick={onAddItemToMesa}
-                    className="rounded-xl bg-primary px-4 py-2.5 sm:px-5 sm:py-3 text-sm sm:text-base font-black text-primary-foreground"
-                  >
-                    ADICIONAR ITEM
-                  </button>
+                    <button
+                      type="button"
+                      onClick={onAddItemToMesa}
+                      className="rounded-xl bg-primary px-4 py-2.5 sm:px-5 sm:py-3 text-sm sm:text-base font-black text-primary-foreground transition-all active:scale-95"
+                    >
+                      + Lançar Item
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={onFinalize}
-                    className="rounded-xl bg-green-600 px-4 py-2.5 sm:px-5 sm:py-3 text-sm sm:text-base font-black text-white"
-                  >
-                    Finalizar pagamento
-                  </button>
-                </>
-              )}
+                    {podePagar && (
+                      <button
+                        type="button"
+                        onClick={() => onFinalize(orders, total)}
+                        className="rounded-xl bg-green-600 px-4 py-2.5 sm:px-5 sm:py-3 text-sm sm:text-base font-black text-white flex items-center gap-2 transition-all hover:bg-green-500 active:scale-95 shadow-lg shadow-green-600/20"
+                      >
+                        <CreditCard className="w-5 h-5" />
+                        Pagar Mesa Completa
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {printModalOpen && (
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/90 p-4 print:hidden animate-fade-in">
+          <div className="w-full max-w-sm rounded-3xl border border-gray-800 bg-[#111] p-6 text-white shadow-2xl animate-slide-up">
+            <h3 className="text-xl font-black mb-1 flex items-center gap-2">
+              <Printer className="w-5 h-5 text-gray-400" /> Opções de Impressão
+            </h3>
+            <p className="text-sm text-gray-400 mb-6">Mesa {mesa.numero}</p>
+
+            <div className="space-y-3">
+              <button
+                onClick={() => handlePrintConta(`Mesa Completa`)}
+                className="w-full flex justify-between items-center bg-primary/10 border border-primary/30 p-4 rounded-2xl hover:bg-primary/20 transition-all active:scale-95"
+              >
+                <div className="text-left">
+                  <span className="block font-bold text-primary">Imprimir Mesa Completa</span>
+                  <span className="text-xs text-primary/70">{comandas.length} comandas juntas</span>
+                </div>
+                <span className="font-black text-primary">{formatMoney(total)}</span>
+              </button>
+
+              <div className="my-4 border-t border-gray-800" />
+
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wider px-1">Comandas Individuais</p>
+              
+              <div className="max-h-60 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+                {comandas.map(c => (
+                  <button
+                    key={c.nome}
+                    onClick={() => handlePrintConta(c.nome)}
+                    className="w-full flex justify-between items-center bg-gray-900 border border-gray-800 p-3 rounded-xl hover:bg-gray-800 transition-all active:scale-95"
+                  >
+                    <span className="font-bold text-white truncate max-w-[140px] text-left">{c.nome}</span>
+                    <span className="font-black text-gray-300">{formatMoney(c.total)}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setPrintModalOpen(false)}
+              className="mt-6 w-full py-3 bg-gray-800 hover:bg-gray-700 rounded-xl font-bold transition-all"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

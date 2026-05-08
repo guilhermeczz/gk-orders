@@ -10,7 +10,6 @@ import {
 import { supabase } from './supabase';
 import { toast } from 'sonner';
 import {
-  DEFAULT_LOJA_ID,
   setCurrentStoreId,
   clearCurrentStoreId,
 } from './current-store';
@@ -22,6 +21,8 @@ interface AuthUser {
   lojaId: string | null;
   perfil: string;
   isDeveloper: boolean;
+  ativo?: boolean;      // ADICIONADO: Otimização para não consultar 2x
+  lojaAtiva?: boolean;  // ADICIONADO: Otimização para não consultar 2x
 }
 
 interface RegisterOptions {
@@ -69,16 +70,23 @@ async function getUserStoreInfo(userId: string, username: string, name: string) 
 
   if (developer) {
     return {
-      lojaId: DEFAULT_LOJA_ID,
+      lojaId: '',
       perfil: 'desenvolvedor',
       isDeveloper: true,
       ativo: true,
+      lojaAtiva: true,
     };
   }
 
   const { data: usuario, error: usuarioError } = await supabase
     .from('usuarios')
-    .select('id, loja_id, perfil, ativo')
+    .select(`
+      id, 
+      loja_id, 
+      perfil, 
+      ativo,
+      lojas ( ativa )
+    `)
     .eq('auth_user_id', userId)
     .maybeSingle();
 
@@ -92,8 +100,11 @@ async function getUserStoreInfo(userId: string, username: string, name: string) 
       perfil: usuario?.perfil || 'operador',
       isDeveloper: false,
       ativo: false,
+      lojaAtiva: false,
     };
   }
+
+  const lojaDoUsuarioAtiva = usuario?.lojas && !Array.isArray(usuario.lojas) ? (usuario.lojas as any).ativa : true;
 
   if (usuario?.loja_id) {
     return {
@@ -101,13 +112,19 @@ async function getUserStoreInfo(userId: string, username: string, name: string) 
       perfil: usuario?.perfil || 'operador',
       isDeveloper: false,
       ativo: true,
+      lojaAtiva: lojaDoUsuarioAtiva,
     };
   }
 
   if (usuario?.id) {
     const { data: vinculo, error: vinculoError } = await supabase
       .from('usuario_lojas')
-      .select('loja_id, perfil, ativo')
+      .select(`
+        loja_id, 
+        perfil, 
+        ativo,
+        lojas ( ativa )
+      `)
       .eq('usuario_id', usuario.id)
       .eq('ativo', true)
       .limit(1)
@@ -118,11 +135,14 @@ async function getUserStoreInfo(userId: string, username: string, name: string) 
     }
 
     if (vinculo?.loja_id) {
+      const lojaDoVinculoAtiva = vinculo?.lojas && !Array.isArray(vinculo.lojas) ? (vinculo.lojas as any).ativa : true;
+
       return {
         lojaId: String(vinculo.loja_id),
         perfil: vinculo?.perfil || usuario?.perfil || 'operador',
         isDeveloper: false,
         ativo: vinculo?.ativo ?? true,
+        lojaAtiva: lojaDoVinculoAtiva,
       };
     }
   }
@@ -132,6 +152,7 @@ async function getUserStoreInfo(userId: string, username: string, name: string) 
     perfil: usuario?.perfil || 'operador',
     isDeveloper: false,
     ativo: true,
+    lojaAtiva: true,
   };
 }
 
@@ -152,6 +173,8 @@ async function formatUser(supabaseUser: any): Promise<AuthUser> {
     lojaId: storeInfo.lojaId,
     perfil: storeInfo.perfil,
     isDeveloper: storeInfo.isDeveloper,
+    ativo: storeInfo.ativo,
+    lojaAtiva: storeInfo.lojaAtiva,
   };
 }
 
@@ -162,11 +185,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const applyUserStore = useCallback((authUser: AuthUser) => {
     if (authUser.isDeveloper) {
       const savedStore = localStorage.getItem('gk_orders_current_store_id');
-
       if (!savedStore) {
-        setCurrentStoreId(DEFAULT_LOJA_ID);
+        setCurrentStoreId('');
       }
-
       return;
     }
 
@@ -176,31 +197,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    let mounted = true;
+    let isMounted = true;
+    
+    // BLINDAGEM MÁXIMA: Se o Supabase travar na rede, forçamos a liberação da tela após 5 segundos.
+    const forceStopTimer = setTimeout(() => {
+      if (isMounted) {
+        setIsInitializing(false);
+      }
+    }, 5000);
 
-    const initializeAuth = async () => {
+    const init = async () => {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (!mounted) return;
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error) throw error;
 
         if (session?.user) {
           const authUser = await formatUser(session.user);
 
-          const storeInfo = await getUserStoreInfo(
-            session.user.id,
-            authUser.username,
-            authUser.name
-          );
-
-          if (storeInfo.ativo === false) {
+          if (authUser.ativo === false) {
             await supabase.auth.signOut();
             clearCurrentStoreId();
             setUser(null);
-            toast.error('Usuário inativo. Fale com o administrador.');
-            setIsInitializing(false);
+            toast.error('Acesso bloqueado: Usuário inativo.');
+            return;
+          }
+
+          if (authUser.lojaAtiva === false && !authUser.isDeveloper) {
+            await supabase.auth.signOut();
+            clearCurrentStoreId();
+            setUser(null);
+            toast.error('Acesso bloqueado: A loja vinculada está inativa.');
             return;
           }
 
@@ -209,7 +235,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             clearCurrentStoreId();
             setUser(null);
             toast.error('Usuário sem loja vinculada. Fale com o administrador.');
-            setIsInitializing(false);
             return;
           }
 
@@ -217,36 +242,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           applyUserStore(authUser);
         }
       } catch (error) {
-        console.error('Erro ao iniciar autenticação:', error);
+        console.error('Erro na inicialização da autenticação:', error);
         setUser(null);
       } finally {
-        if (mounted) {
-          setIsInitializing(false);
-        }
+        // Garantia de que a tela de loading vai sumir, independentemente de erros
+        clearTimeout(forceStopTimer);
+        setIsInitializing(false);
       }
     };
 
-    initializeAuth();
+    init();
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return;
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!isMounted) return;
+      
+      // Ignora o evento inicial pois o getSession já fez o trabalho pesado na montagem
+      if (event === 'INITIAL_SESSION') return;
 
       if (session?.user) {
         const authUser = await formatUser(session.user);
 
-        const storeInfo = await getUserStoreInfo(
-          session.user.id,
-          authUser.username,
-          authUser.name
-        );
-
-        if (storeInfo.ativo === false) {
+        if (authUser.ativo === false) {
           await supabase.auth.signOut();
           clearCurrentStoreId();
           setUser(null);
-          toast.error('Usuário inativo. Fale com o administrador.');
+          toast.error('Acesso bloqueado: Usuário inativo.');
+          return;
+        }
+
+        if (authUser.lojaAtiva === false && !authUser.isDeveloper) {
+          await supabase.auth.signOut();
+          clearCurrentStoreId();
+          setUser(null);
+          toast.error('Acesso bloqueado: A loja vinculada está inativa.');
           return;
         }
 
@@ -266,7 +296,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => {
-      mounted = false;
+      isMounted = false;
+      clearTimeout(forceStopTimer);
       subscription.unsubscribe();
     };
   }, [applyUserStore]);
@@ -293,19 +324,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return false;
         }
 
+        // OTIMIZAÇÃO: formatUser agora já traz as validações de ativo/inativo num único pacote
         const authUser = await formatUser(data.user);
 
-        const storeInfo = await getUserStoreInfo(
-          data.user.id,
-          authUser.username,
-          authUser.name
-        );
-
-        if (storeInfo.ativo === false) {
+        if (authUser.ativo === false) {
           await supabase.auth.signOut();
           clearCurrentStoreId();
           setUser(null);
-          toast.error('Usuário inativo. Fale com o administrador.');
+          toast.error('Acesso bloqueado: Usuário inativo.');
+          return false;
+        }
+
+        if (authUser.lojaAtiva === false && !authUser.isDeveloper) {
+          await supabase.auth.signOut();
+          clearCurrentStoreId();
+          setUser(null);
+          toast.error('Acesso bloqueado: A loja vinculada está inativa.');
           return false;
         }
 

@@ -25,7 +25,7 @@ function DefaultErrorComponent({
       <div className="max-w-md text-center">
 
         <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
-          ⚠️
+          <span className="text-2xl">⚠️</span>
         </div>
 
         <h1 className="text-2xl font-bold text-foreground">
@@ -52,7 +52,7 @@ function DefaultErrorComponent({
 
           <a
             href="/"
-            className="rounded-md border px-4 py-2 text-sm"
+            className="rounded-md border px-4 py-2 text-sm text-foreground hover:bg-muted"
           >
             Início
           </a>
@@ -64,6 +64,7 @@ function DefaultErrorComponent({
 }
 
 // 🔥 SINGLETON (IMPORTANTE)
+// Mantém uma única instância de roteamento na memória do navegador.
 let routerInstance: ReturnType<typeof createRouter> | null = null;
 
 export const getRouter = () => {
@@ -79,3 +80,10 @@ export const getRouter = () => {
 
   return routerInstance;
 };
+
+// Declaração de módulo do TanStack Router para tipagem segura no TypeScript
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: ReturnType<typeof getRouter>;
+  }
+}

@@ -46,12 +46,14 @@ export interface Order {
   changeGiven?: number | null;
   createdBy?: string | null;
   mesaId?: string | null;
+  loja_id?: string; // <-- Adicionado para o multiloja
 }
 
 export interface Category {
   id: string;
   name: string;
   emoji: string;
+  loja_id?: string; // <-- Adicionado para o multiloja
 }
 
 export interface Product {
@@ -60,6 +62,7 @@ export interface Product {
   price: number;
   categoryId: string;
   active?: boolean;
+  loja_id?: string; // <-- Adicionado para o multiloja
 }
 
 export interface User {
@@ -67,6 +70,7 @@ export interface User {
   name: string;
   username: string;
   active?: boolean;
+  loja_id?: string; // <-- Adicionado para o multiloja
 }
 
 export interface Mesa {
@@ -78,4 +82,5 @@ export interface Mesa {
   ativa?: boolean;
   createdAt?: string | Date | null;
   updatedAt?: string | Date | null;
+  loja_id?: string; // <-- Adicionado para o multiloja
 }

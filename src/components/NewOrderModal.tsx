@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import type { OrderItem, OrderItemAddition, Product, Mesa } from '@/lib/types';
 import { toast } from 'sonner';
@@ -58,7 +58,7 @@ export function NewOrderModal({
   mesaId,
   mesaNumero,
 }: NewOrderModalProps) {
-  const { products, categories, mesas, addOrder, updateOrder, appendItemsToOrder } =
+  const { products, categories, mesas, addOrder, updateOrder, appendItemsToOrder, lojaAtualId } =
     useAppStore();
   const { user } = useAuth();
 
@@ -88,43 +88,76 @@ export function NewOrderModal({
   const isForcedPickup = forceOrderType === 'Retirada';
   const isTopAvulsoFlow = !isAppending && !isEditing && !isMesaFlow && !isForcedPickup;
 
-  const normalizeText = (value: string) => {
+  // =========================================================================
+  // OTIMIZAÇÃO DE PERFORMANCE: Dicionários Map
+  // =========================================================================
+  const productsMap = useMemo(() => {
+    const map = new Map<string, Product>();
+    products.forEach((p) => map.set(String(p.id), p));
+    return map;
+  }, [products]);
+
+  const categoriesMap = useMemo(() => {
+    const map = new Map<string, any>();
+    categories.forEach((c) => map.set(String(c.id), c));
+    return map;
+  }, [categories]);
+
+  const normalizeText = useCallback((value: string) => {
     return String(value || '')
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase()
       .trim();
-  };
+  }, []);
 
-  const getCategoryNameByProductId = (productId: string | number) => {
-    const product = products.find((p: Product) => String(p.id) === String(productId));
-    const category = categories.find((c: any) => String(c.id) === String(product?.categoryId));
+  const getCategoryNameByProductId = useCallback(
+    (productId: string | number) => {
+      const product = productsMap.get(String(productId));
+      if (!product) return '';
+      const category = categoriesMap.get(String(product.categoryId));
+      return String(category?.name || '');
+    },
+    [productsMap, categoriesMap]
+  );
 
-    return String(category?.name || '');
-  };
+  // INTELIGÊNCIA: Se a categoria tiver "adicional", "adicionais" ou "extra", ele entende.
+  const isAdditionalProduct = useCallback(
+    (productId: string | number) => {
+      const catName = normalizeText(getCategoryNameByProductId(productId));
+      return catName.includes('adicional') || catName.includes('adicionais') || catName.includes('extra');
+    },
+    [getCategoryNameByProductId, normalizeText]
+  );
 
-  const isAdditionalProduct = (productId: string | number) => {
-    return normalizeText(getCategoryNameByProductId(productId)) === 'adicionais';
-  };
+  // INTELIGÊNCIA: Lista Negra. Se for bebida/água/suco, esconde o botão de adicional. Senão, mostra!
+  const productAcceptsAdditions = useCallback(
+    (productId: string | number) => {
+      const categoryName = normalizeText(getCategoryNameByProductId(productId));
+      
+      const isDrinkOrDessert = 
+        categoryName.includes('bebida') || 
+        categoryName.includes('refrigerante') || 
+        categoryName.includes('agua') || 
+        categoryName.includes('suco') || 
+        categoryName.includes('cerveja') || 
+        categoryName.includes('sobremesa');
 
-  const productAcceptsAdditions = (productId: string | number) => {
-    const categoryName = normalizeText(getCategoryNameByProductId(productId));
+      if (isDrinkOrDessert || isAdditionalProduct(productId)) return false;
 
-    const allowedCategories = [
-      'lanches de hamburguer',
-      'lanches de frango',
-      'lanches de calabresa',
-      'lanches leves',
-      'lanches especiais',
-      'hot dog',
-    ];
+      return true; // Qualquer outra comida vai aceitar adicionais automaticamente!
+    },
+    [getCategoryNameByProductId, normalizeText, isAdditionalProduct]
+  );
 
-    return allowedCategories.includes(categoryName);
-  };
+  const getProductById = useCallback(
+    (productId: string | number) => {
+      return productsMap.get(String(productId)) ?? null;
+    },
+    [productsMap]
+  );
 
-  const getProductById = (productId: string | number) => {
-    return products.find((p: Product) => String(p.id) === String(productId)) ?? null;
-  };
+  // =========================================================================
 
   const mesasDisponiveis = useMemo(() => {
     return (mesas ?? [])
@@ -136,11 +169,9 @@ export function NewOrderModal({
     if (mesaId) {
       return mesasDisponiveis.find((m) => String(m.id) === String(mesaId)) ?? null;
     }
-
     if (selectedMesaId) {
       return mesasDisponiveis.find((m) => String(m.id) === String(selectedMesaId)) ?? null;
     }
-
     return null;
   }, [mesaId, mesasDisponiveis, selectedMesaId]);
 
@@ -150,7 +181,6 @@ export function NewOrderModal({
     if (!open) return;
 
     const fallbackCustomer = initialCustomerName ?? (mesaNumero ? `Mesa ${mesaNumero}` : '');
-
     setCustomerName(fallbackCustomer);
 
     const sourceNotes = appendOrderId ? appendBaseNotes ?? '' : initialNotes ?? '';
@@ -214,30 +244,20 @@ export function NewOrderModal({
   }, [selectedMesa, isTopAvulsoFlow]);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = 0;
-    }
-
-    if (showSummary) {
-      setMesaDropdownAberto(false);
-    }
+    if (scrollRef.current) scrollRef.current.scrollTop = 0;
+    if (showSummary) setMesaDropdownAberto(false);
   }, [showSummary]);
 
   const filteredProducts = useMemo(() => {
     const q = search.toLowerCase().trim();
+    if (!q) return products.filter((p: Product) => p.active !== false);
 
     return products.filter((p: Product) => {
-      const category = categories.find((c: any) => String(c.id) === String(p.categoryId));
-      const categoryName = String(category?.name || '').toLowerCase();
-
-      if (!q) return p.active !== false;
-
-      return (
-        p.active !== false &&
-        (String(p.name || '').toLowerCase().includes(q) || categoryName.includes(q))
-      );
+      if (p.active === false) return false;
+      const categoryName = getCategoryNameByProductId(p.id).toLowerCase();
+      return String(p.name || '').toLowerCase().includes(q) || categoryName.includes(q);
     });
-  }, [products, categories, search]);
+  }, [products, search, getCategoryNameByProductId]);
 
   const additionalProducts = useMemo(() => {
     return products
@@ -246,29 +266,32 @@ export function NewOrderModal({
         if (a.price !== b.price) return a.price - b.price;
         return a.name.localeCompare(b.name, 'pt-BR');
       });
-  }, [products, categories]);
+  }, [products, isAdditionalProduct]);
 
+  // =========================================================================
+  // OTIMIZAÇÃO: GroupedProducts agora varre a lista só 1 vez
+  // =========================================================================
   const groupedProducts = useMemo(() => {
-    const grouped = categories.reduce<Record<string, Product[]>>((acc, category: any) => {
-      const categoryName = String(category.name || '').trim();
+    const grouped: Record<string, Product[]> = {};
 
-      const items = filteredProducts
-        .filter((p) => String(p.categoryId) === String(category.id))
-        .filter((p) => !isAdditionalProduct(p.id))
-        .sort((a, b) => {
-          if (a.price !== b.price) return a.price - b.price;
-          return a.name.localeCompare(b.name, 'pt-BR');
-        });
+    filteredProducts.forEach((p) => {
+      if (isAdditionalProduct(p.id)) return;
+      const catName = getCategoryNameByProductId(p.id);
+      if (!catName) return;
+      
+      if (!grouped[catName]) grouped[catName] = [];
+      grouped[catName].push(p);
+    });
 
-      if (items.length > 0 && categoryName) {
-        acc[categoryName] = items;
-      }
-
-      return acc;
-    }, {});
+    Object.values(grouped).forEach((arr) => {
+      arr.sort((a, b) => {
+        if (a.price !== b.price) return a.price - b.price;
+        return a.name.localeCompare(b.name, 'pt-BR');
+      });
+    });
 
     const orderedCategoryNames = categoryDisplayOrder.filter(
-      (categoryName) => grouped[categoryName]?.length > 0
+      (categoryName) => grouped[categoryName] && grouped[categoryName].length > 0
     );
 
     const extraCategoryNames = Object.keys(grouped)
@@ -278,22 +301,18 @@ export function NewOrderModal({
     return [...orderedCategoryNames, ...extraCategoryNames].map(
       (categoryName) => [categoryName, grouped[categoryName]] as const
     );
-  }, [categories, filteredProducts, products]);
+  }, [filteredProducts, isAdditionalProduct, getCategoryNameByProductId]);
 
   const cartItems = useMemo(() => {
     return Object.entries(cart)
       .map(([id, quantity]) => {
-        const p = products.find((prod: any) => String(prod.id) === String(id));
+        const p = productsMap.get(id); 
         if (!p) return null;
 
         const additionsMap = cartAdditions[id] ?? {};
-
         const additions = Object.entries(additionsMap)
           .map(([additionId, additionQty]) => {
-            const additionProduct = products.find(
-              (prod: any) => String(prod.id) === String(additionId)
-            );
-
+            const additionProduct = productsMap.get(additionId); 
             if (!additionProduct || additionQty <= 0) return null;
 
             return {
@@ -314,17 +333,15 @@ export function NewOrderModal({
         };
       })
       .filter(Boolean) as OrderItem[];
-  }, [cart, cartAdditions, products]);
+  }, [cart, cartAdditions, productsMap]);
 
   const total = useMemo(() => {
     return cartItems.reduce((sum, item) => {
       const baseTotal = Number(item.quantity || 0) * Number(item.unitPrice || 0);
       const additionsTotal = (item.additions ?? []).reduce(
-        (acc, addition) =>
-          acc + Number(addition.quantity || 0) * Number(addition.unitPrice || 0),
+        (acc, addition) => acc + Number(addition.quantity || 0) * Number(addition.unitPrice || 0),
         0
       );
-
       return sum + baseTotal + additionsTotal;
     }, 0);
   }, [cartItems]);
@@ -337,15 +354,12 @@ export function NewOrderModal({
 
       if (next <= 0) {
         const { [safeId]: _, ...rest } = prev;
-
         setCartAdditions((current) => {
           const { [safeId]: __, ...remaining } = current;
           return remaining;
         });
-
         return rest;
       }
-
       return { ...prev, [safeId]: next };
     });
   };
@@ -388,6 +402,11 @@ export function NewOrderModal({
     : null;
 
   const handleConfirm = async () => {
+    if (!lojaAtualId) {
+      toast.error('Sessão inválida: Nenhuma loja vinculada.');
+      return;
+    }
+
     if (isTopAvulsoFlow && !selectedMesa) {
       toast.error('Selecione uma mesa criada para abrir o pedido.');
       return;
@@ -952,7 +971,7 @@ export function NewOrderModal({
                 setShowSummary(true);
               }}
               disabled={cartItems.length === 0}
-              className="w-full py-4 sm:py-5 bg-primary text-primary-foreground font-black rounded-2xl text-[17px] sm:text-lg shadow-lg hover:shadow-[0_8px_25px_rgba(255,106,0,0.3)] transition-all duration-300 hover:-translate-y-1 active:scale-95 flex justify-between px-6 sm:px-8 items-center disabled:opacity-50 disabled:hover:translate-y-0"
+              className="w-full py-4 sm:py-5 bg-primary text-primary-foreground font-black rounded-2xl text-[17px] sm:text-lg shadow-lg hover:shadow-[0_8px_25px_rgba(var(--primary),0.3)] transition-all duration-300 hover:-translate-y-1 active:scale-95 flex justify-between px-6 sm:px-8 items-center disabled:opacity-50 disabled:hover:translate-y-0"
               type="button"
             >
               <span>Avançar para Revisão</span>

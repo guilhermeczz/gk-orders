@@ -76,7 +76,8 @@ function normalizeText(value: string) {
 }
 
 export function PaidOrdersPage() {
-  const { orders } = useAppStore();
+  // ADICIONADO: lojaAtualId para garantir a blindagem do isolamento dos dados
+  const { orders, lojaAtualId } = useAppStore();
 
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -88,7 +89,12 @@ export function PaidOrdersPage() {
 
   const [endDate, setEndDate] = useState(() => toInputDate(new Date()));
 
+  // ============================================================================
+  // OTIMIZAÇÃO: Filtra os pagos e já garante a segurança do lojaAtualId
+  // ============================================================================
   const paidOrders = useMemo(() => {
+    if (!lojaAtualId) return []; // Blindagem de segurança
+
     return orders
       .filter((order) => order.status === 'paid' || order.paid)
       .sort(
@@ -96,7 +102,7 @@ export function PaidOrdersPage() {
           new Date(b.paidAt || b.createdAt).getTime() -
           new Date(a.paidAt || a.createdAt).getTime()
       );
-  }, [orders]);
+  }, [orders, lojaAtualId]);
 
   const paidOrdersByDate = useMemo(() => {
     const startBase = fromInputDate(startDate);
@@ -152,11 +158,14 @@ export function PaidOrdersPage() {
     return filteredPaidOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
   }, [filteredPaidOrders]);
 
+  // ============================================================================
+  // OTIMIZAÇÃO: Instancia o "hoje" apenas uma vez, evitando loops de processamento
+  // ============================================================================
   const totalToday = useMemo(() => {
-    const today = new Date().toDateString();
+    const todayStr = new Date().toDateString(); // Fica fora do loop (O(1))
 
     return paidOrders
-      .filter((order) => new Date(order.paidAt || order.createdAt).toDateString() === today)
+      .filter((order) => new Date(order.paidAt || order.createdAt).toDateString() === todayStr)
       .reduce((sum, order) => sum + Number(order.total || 0), 0);
   }, [paidOrders]);
 

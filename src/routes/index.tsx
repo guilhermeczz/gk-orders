@@ -1,6 +1,7 @@
 // @ts-ignore
 import React from 'react';
 
+// Polyfill para navegadores antigos gerarem UUIDs (muito útil para evitar bugs obscuros)
 if (typeof window !== 'undefined' && !window.crypto.randomUUID) {
   // @ts-ignore
   window.crypto.randomUUID = function () {
@@ -37,6 +38,7 @@ function LoginPage() {
   const [loginUser, setLoginUser] = useState('');
   const [loginPass, setLoginPass] = useState('');
 
+  // Se já estiver logado, não tem por que ficar na tela de login
   if (isAuthenticated) {
     return <Navigate to="/dashboard" />;
   }
@@ -50,6 +52,10 @@ function LoginPage() {
     setLoading(true);
 
     try {
+      // BLINDAGEM MULTI-LOJA:
+      // O componente confia cegamente na função de auth.
+      // O auth vai no Supabase, acha o usuário e descobre silenciosamente
+      // qual é o "loja_id" vinculado a ele, setando o localStorage depois.
       const success = await login(loginUser.trim(), loginPass);
 
       if (success) {

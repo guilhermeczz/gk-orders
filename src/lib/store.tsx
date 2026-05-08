@@ -82,6 +82,7 @@ interface AppState {
   categories: Category[];
   mesas: Mesa[];
   orderCounter: number;
+  lojaAtualId: string | null;
 
   fetchUsers: () => Promise<void>;
   fetchMesas: () => Promise<void>;
@@ -141,6 +142,7 @@ interface AppState {
     numero: number;
     nome?: string;
     garcomNome?: string;
+    loja_id?: string;
   }) => Promise<boolean>;
 
   addMesasEmLote: (data: {
@@ -148,6 +150,7 @@ interface AppState {
     final: number;
     prefixoNome?: string;
     garcomNome?: string;
+    loja_id?: string;
   }) => Promise<boolean>;
 
   updateMesa: (mesa: Mesa) => Promise<void>;
@@ -165,6 +168,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [users, setUsers] = useState<User[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [mesas, setMesas] = useState<Mesa[]>([]);
+  
   const [lojaAtualId, setLojaAtualId] = useState(() => getCurrentStoreId());
 
   useEffect(() => {
@@ -176,6 +180,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const fetchUsers = useCallback(async () => {
+    if (!lojaAtualId) return; // BLINDAGEM MULTI-LOJA
+    
     const { data: userData, error } = await supabase
       .from('usuarios')
       .select('id, nome, username')
@@ -197,6 +203,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [lojaAtualId]);
 
   const fetchMesas = useCallback(async () => {
+    if (!lojaAtualId) return; // BLINDAGEM MULTI-LOJA
+
     const { data, error } = await supabase
       .from('mesas')
       .select('*')
@@ -218,11 +226,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         ativa: mesa.ativa ?? true,
         createdAt: mesa.created_at ?? null,
         updatedAt: mesa.updated_at ?? null,
+        loja_id: mesa.loja_id ? String(mesa.loja_id) : undefined, 
       }))
     );
   }, [lojaAtualId]);
 
   const fetchData = useCallback(async () => {
+    if (!lojaAtualId) return; // BLINDAGEM DE PERFORMANCE
+
     try {
       const [
         { data: catData, error: catError },
@@ -370,6 +381,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             (a, b) =>
               new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           ),
+          loja_id: o.loja_id ? String(o.loja_id) : undefined,
         };
       });
 
@@ -383,7 +395,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     fetchData();
   }, [fetchData]);
 
+  // =========================================================================
+  // OTIMIZAÇÃO: Fim do loop infinito de Realtime
+  // =========================================================================
   useEffect(() => {
+    if (!lojaAtualId) return;
+
     let isMounted = true;
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -405,58 +422,35 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }, 150);
     };
 
-    const channelName = `gk-orders-realtime-${lojaAtualId}-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2)}`;
+    // Canal com nome estável para a loja não ficar abrindo e fechando conexões
+    const channelName = `gk-orders-realtime-${lojaAtualId}`;
 
     const channel = supabase
       .channel(channelName)
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'pedidos',
-          filter: `loja_id=eq.${lojaAtualId}`,
-        },
+        { event: '*', schema: 'public', table: 'pedidos', filter: `loja_id=eq.${lojaAtualId}` },
         () => refreshNow()
       )
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'pedido_itens',
-          filter: `loja_id=eq.${lojaAtualId}`,
-        },
+        { event: '*', schema: 'public', table: 'pedido_itens', filter: `loja_id=eq.${lojaAtualId}` },
         () => refreshNow()
       )
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'mesas',
-          filter: `loja_id=eq.${lojaAtualId}`,
-        },
+        { event: '*', schema: 'public', table: 'mesas', filter: `loja_id=eq.${lojaAtualId}` },
         () => refreshNow()
       )
       .subscribe((status) => {
         console.log('Realtime GK Orders:', status);
-
-        if (status === 'SUBSCRIBED') {
-          refreshNow();
-        }
+        // REMOVIDO: refreshNow() não deve ser chamado no 'SUBSCRIBED'. 
+        // Ele causava o loop infinito na internet.
       });
 
-    const handleFocus = () => {
-      refreshNow();
-    };
-
+    const handleFocus = () => { refreshNow(); };
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        refreshNow();
-      }
+      if (document.visibilityState === 'visible') { refreshNow(); }
     };
 
     window.addEventListener('focus', handleFocus);
@@ -464,26 +458,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     return () => {
       isMounted = false;
-
-      if (refreshTimer) {
-        clearTimeout(refreshTimer);
-      }
-
+      if (refreshTimer) clearTimeout(refreshTimer);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-
       supabase.removeChannel(channel);
     };
   }, [fetchData, lojaAtualId]);
 
+  // =========================================================================
+
   const addOrder = useCallback(
-    async (
-      customerName: string,
-      items: OrderItem[],
-      notes: string = '',
-      createdBy?: string,
-      mesaId?: string | null
-    ) => {
+    async (customerName: string, items: OrderItem[], notes: string = '', createdBy?: string, mesaId?: string | null) => {
+      if (!lojaAtualId) return;
       const total = getItemsTotal(items);
       const safeCreatedBy = String(createdBy || '').trim() || 'Operador';
 
@@ -534,9 +520,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch_created_at: new Date().toISOString(),
       }));
 
-      const { error: itemsError } = await supabase
-        .from('pedido_itens')
-        .insert(itemsToInsert);
+      const { error: itemsError } = await supabase.from('pedido_itens').insert(itemsToInsert);
 
       if (itemsError) throw itemsError;
 
@@ -547,12 +531,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const updateOrder = useCallback(
-    async (
-      orderId: string,
-      customerName: string,
-      items: OrderItem[],
-      notes: string = ''
-    ) => {
+    async (orderId: string, customerName: string, items: OrderItem[], notes: string = '') => {
+      if (!lojaAtualId) return;
       const total = getItemsTotal(items);
 
       const { error: orderError } = await supabase
@@ -588,9 +568,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch_created_at: new Date().toISOString(),
       }));
 
-      const { error: insertError } = await supabase
-        .from('pedido_itens')
-        .insert(itemsToInsert);
+      const { error: insertError } = await supabase.from('pedido_itens').insert(itemsToInsert);
 
       if (insertError) throw insertError;
 
@@ -602,6 +580,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const appendItemsToOrder = useCallback(
     async (orderId: string, items: OrderItem[], notes: string = '') => {
+      if (!lojaAtualId) return;
       const order = orders.find((o) => String(o.id) === String(orderId));
       if (!order) throw new Error('Pedido não encontrado.');
 
@@ -638,9 +617,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         batch_created_at: nowIso,
       }));
 
-      const { error: insertError } = await supabase
-        .from('pedido_itens')
-        .insert(itemsToInsert);
+      const { error: insertError } = await supabase.from('pedido_itens').insert(itemsToInsert);
 
       if (insertError) throw insertError;
 
@@ -652,6 +629,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateOrderItem = useCallback(
     async (itemId: string, quantity: number) => {
+      if (!lojaAtualId) return;
       try {
         const qty = Number(quantity);
 
@@ -707,6 +685,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteOrderItem = useCallback(
     async (itemId: string) => {
+      if (!lojaAtualId) return;
       try {
         const targetOrder = orders.find((order) =>
           (order.items ?? []).some((item) => String(item.id) === String(itemId))
@@ -787,6 +766,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const moveOrder = useCallback(
     async (orderId: string, newStatus: OrderStatus) => {
+      if (!lojaAtualId) return;
       const { error } = await supabase
         .from('pedidos')
         .update({ status: newStatus })
@@ -802,9 +782,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteOrder = useCallback(
     async (orderId: string) => {
-      const targetOrder = orders.find(
-        (order) => String(order.id) === String(orderId)
-      );
+      if (!lojaAtualId) return;
+      const targetOrder = orders.find((order) => String(order.id) === String(orderId));
 
       const { error } = await supabase
         .from('pedidos')
@@ -844,11 +823,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const payOrder = useCallback(
-    async (
-      orderId: string,
-      paymentMethod: PaymentMethod,
-      cashMeta?: CashPaymentMeta
-    ) => {
+    async (orderId: string, paymentMethod: PaymentMethod, cashMeta?: CashPaymentMeta) => {
+      if (!lojaAtualId) return;
       try {
         let cashSessionId: number | null = null;
 
@@ -896,9 +872,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (error) throw error;
 
-        const targetOrder = orders.find(
-          (o) => String(o.id) === String(orderId)
-        );
+        const targetOrder = orders.find((o) => String(o.id) === String(orderId));
 
         if (targetOrder?.mesaId) {
           const stillHasOpenOrders = orders.some(
@@ -934,11 +908,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const payOrdersBulk = useCallback(
-    async (
-      orderIds: string[],
-      paymentMethod: PaymentMethod,
-      cashMeta?: CashPaymentMeta
-    ) => {
+    async (orderIds: string[], paymentMethod: PaymentMethod, cashMeta?: CashPaymentMeta) => {
+      if (!lojaAtualId) return;
       try {
         const validIds = orderIds.filter(Boolean);
 
@@ -1038,6 +1009,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const addProduct = useCallback(
     async (product: Omit<Product, 'id'>) => {
+      if (!lojaAtualId) return false;
       const { error } = await supabase.from('produtos').insert([
         {
           loja_id: lojaAtualId,
@@ -1061,6 +1033,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateProduct = useCallback(
     async (product: Product) => {
+      if (!lojaAtualId) return;
       const { error } = await supabase
         .from('produtos')
         .update({
@@ -1086,6 +1059,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteProduct = useCallback(
     async (id: string) => {
+      if (!lojaAtualId) return;
       const { error } = await supabase
         .from('produtos')
         .delete()
@@ -1105,6 +1079,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const addCategory = useCallback(
     async (category: Omit<Category, 'id'>) => {
+      if (!lojaAtualId) return;
       const { error } = await supabase.from('categorias').insert([
         {
           loja_id: lojaAtualId,
@@ -1126,6 +1101,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateCategory = useCallback(
     async (category: Category) => {
+      if (!lojaAtualId) return;
       const { error } = await supabase
         .from('categorias')
         .update({
@@ -1149,6 +1125,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteCategory = useCallback(
     async (id: string) => {
+      if (!lojaAtualId) return;
       const { error } = await supabase
         .from('categorias')
         .delete()
@@ -1168,6 +1145,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const addUser = useCallback(
     async (user: Omit<User, 'id'>) => {
+      if (!lojaAtualId) return false;
       const { error } = await supabase.from('usuarios').insert([
         {
           loja_id: lojaAtualId,
@@ -1189,6 +1167,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteUser = useCallback(
     async (id: string) => {
+      if (!lojaAtualId) return;
       const targetUser = users.find((u) => String(u.id) === String(id));
 
       const isProtected =
@@ -1241,7 +1220,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       toast.success('Operador removido com sucesso.');
     },
-    [fetchUsers, users]
+    [fetchUsers, users, lojaAtualId]
   );
 
   const addMesa = useCallback(
@@ -1253,7 +1232,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       numero: number;
       nome?: string;
       garcomNome?: string;
+      loja_id?: string;
     }) => {
+      if (!lojaAtualId) return false;
       try {
         const numeroNormalizado = Number(numero);
 
@@ -1311,7 +1292,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       final: number;
       prefixoNome?: string;
       garcomNome?: string;
+      loja_id?: string;
     }) => {
+      if (!lojaAtualId) return false;
       try {
         const ini = Number(inicial);
         const fim = Number(final);
@@ -1380,6 +1363,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const updateMesa = useCallback(
     async (mesa: Mesa) => {
+      if (!lojaAtualId) return;
       const { error } = await supabase
         .from('mesas')
         .update({
@@ -1407,6 +1391,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const deleteMesa = useCallback(
     async (mesaId: string) => {
+      if (!lojaAtualId) return;
       const hasOpenOrder = orders.some(
         (order) =>
           String(order.mesaId) === String(mesaId) && order.status !== 'paid'
@@ -1482,6 +1467,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         categories,
         mesas,
         orderCounter: orders.length + 1,
+        lojaAtualId, 
         fetchUsers,
         fetchMesas,
         fetchData,
@@ -1515,8 +1501,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 }
 
+// OTIMIZAÇÃO E BLINDAGEM DE CONTEXTO O(1)
+const dummyFallbackState: AppState = {
+  orders: [], products: [], users: [], categories: [], mesas: [], orderCounter: 0, lojaAtualId: null,
+  fetchUsers: async () => {}, fetchMesas: async () => {}, fetchData: async () => {},
+  addOrder: async () => {}, updateOrder: async () => {}, appendItemsToOrder: async () => {},
+  updateOrderItem: async () => {}, deleteOrderItem: async () => {}, moveOrder: async () => {},
+  deleteOrder: async () => {}, payOrder: async () => {}, payOrdersBulk: async () => {},
+  addProduct: async () => false, updateProduct: async () => {}, deleteProduct: async () => {},
+  addCategory: async () => {}, updateCategory: async () => {}, deleteCategory: async () => {},
+  addUser: async () => false, deleteUser: async () => {}, addMesa: async () => false,
+  addMesasEmLote: async () => false, updateMesa: async () => {}, deleteMesa: async () => {},
+  getTodayOrders: () => [], getArchivedOrders: () => [],
+};
+
 export function useAppStore() {
   const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useAppStore must be used within AppProvider');
+  
+  if (!ctx) {
+    // Retorna o Fallback se o TanStack Router tentar avaliar a tela enquanto o AppProvider é desmontado
+    console.warn('Proteção ativada: componente tentou acessar useAppStore fora de contexto.');
+    return dummyFallbackState;
+  }
+  
   return ctx;
 }

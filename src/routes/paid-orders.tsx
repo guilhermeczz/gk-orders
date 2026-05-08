@@ -10,6 +10,8 @@ export const Route = createFileRoute('/paid-orders')({
 function PaidOrdersRoute() {
   const { isAuthenticated } = useAuth();
 
+  // BARREIRA DE SEGURANÇA: 
+  // Impede que usuários não autenticados acessem a rota e tentem carregar o componente.
   if (!isAuthenticated) {
     return <Navigate to="/" />;
   }

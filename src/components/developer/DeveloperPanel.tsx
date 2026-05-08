@@ -23,6 +23,8 @@ import {
   KeyRound,
   UserRound,
   BadgeCheck,
+  Trash2,
+  UploadCloud,
 } from 'lucide-react';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
@@ -51,10 +53,12 @@ type StoreFormData = {
   telefone: string;
   cnpj: string;
   endereco: string;
+  logo_url: string;
   plano: string;
   ativa: boolean;
   nomeImpressora: string;
   quantidadeMesas: string;
+  tema: string;
 };
 
 type LojaUsuario = {
@@ -79,10 +83,12 @@ const emptyForm: StoreFormData = {
   telefone: '',
   cnpj: '',
   endereco: '',
+  logo_url: '',
   plano: 'teste',
   ativa: true,
   nomeImpressora: 'Cozinha',
   quantidadeMesas: '10',
+  tema: 'laranja',
 };
 
 const emptyUserForm: UserFormData = {
@@ -113,7 +119,6 @@ function normalizeUsername(value: string) {
 
 function formatDate(value?: string) {
   if (!value) return '-';
-
   return new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
     month: '2-digit',
@@ -127,11 +132,8 @@ function perfilLabel(perfil: string) {
   const labels: Record<string, string> = {
     admin_loja: 'Admin da loja',
     operador: 'Operador',
-    caixa: 'Caixa',
-    cozinha: 'Cozinha',
     desenvolvedor: 'Desenvolvedor',
   };
-
   return labels[perfil] || perfil;
 }
 
@@ -147,6 +149,7 @@ export function DeveloperPanel() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingLoja, setEditingLoja] = useState<Loja | null>(null);
   const [form, setForm] = useState<StoreFormData>(emptyForm);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
 
   const [usersModalOpen, setUsersModalOpen] = useState(false);
   const [selectedLojaUsers, setSelectedLojaUsers] = useState<Loja | null>(null);
@@ -154,10 +157,10 @@ export function DeveloperPanel() {
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [savingUser, setSavingUser] = useState(false);
   const [userForm, setUserForm] = useState<UserFormData>(emptyUserForm);
+  const [editingUser, setEditingUser] = useState<LojaUsuario | null>(null);
 
   const fetchLojas = async () => {
     setLoading(true);
-
     try {
       const { data, error } = await supabase
         .from('lojas')
@@ -165,11 +168,9 @@ export function DeveloperPanel() {
         .order('created_at', { ascending: false });
 
       if (error) {
-        console.error('Erro ao buscar lojas:', error);
         toast.error('Não foi possível carregar as lojas.');
         return;
       }
-
       setLojas((data ?? []) as Loja[]);
     } finally {
       setLoading(false);
@@ -181,24 +182,17 @@ export function DeveloperPanel() {
   }, []);
 
   const stats = useMemo(() => {
-    const total = lojas.length;
-    const ativas = lojas.filter((loja) => loja.ativa).length;
-    const teste = lojas.filter((loja) => loja.plano === 'teste').length;
-    const inativas = lojas.filter((loja) => !loja.ativa).length;
-
     return {
-      total,
-      ativas,
-      teste,
-      inativas,
+      total: lojas.length,
+      ativas: lojas.filter((l) => l.ativa).length,
+      teste: lojas.filter((l) => l.plano === 'teste').length,
+      inativas: lojas.filter((l) => !l.ativa).length,
     };
   }, [lojas]);
 
   const filteredLojas = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-
     if (!q) return lojas;
-
     return lojas.filter((loja) => {
       return (
         loja.nome.toLowerCase().includes(q) ||
@@ -212,7 +206,6 @@ export function DeveloperPanel() {
 
   const fetchLojaUsers = async (lojaId: string) => {
     setLoadingUsers(true);
-
     try {
       const { data, error } = await supabase
         .from('usuarios')
@@ -221,7 +214,6 @@ export function DeveloperPanel() {
         .order('nome', { ascending: true });
 
       if (error) {
-        console.error('Erro ao buscar usuários da loja:', error);
         toast.error('Não foi possível carregar os usuários da loja.');
         setLojaUsers([]);
         return;
@@ -245,6 +237,7 @@ export function DeveloperPanel() {
   const openUsersModal = async (loja: Loja) => {
     setSelectedLojaUsers(loja);
     setUserForm(emptyUserForm);
+    setEditingUser(null);
     setUsersModalOpen(true);
     await fetchLojaUsers(loja.id);
   };
@@ -254,10 +247,8 @@ export function DeveloperPanel() {
       toast.error('Essa loja está inativa. Ative a loja antes de acessar.');
       return;
     }
-
     setCurrentStoreId(loja.id);
     toast.success(`Acessando ${loja.nome}...`);
-
     setTimeout(() => {
       window.location.href = '/dashboard';
     }, 300);
@@ -266,22 +257,26 @@ export function DeveloperPanel() {
   const openCreateModal = () => {
     setEditingLoja(null);
     setForm(emptyForm);
+    setLogoFile(null);
     setModalOpen(true);
   };
 
   const openEditModal = async (loja: Loja) => {
     setEditingLoja(loja);
+    setLogoFile(null);
 
     let nomeImpressora = 'Cozinha';
+    let tema = 'laranja';
 
     const { data: config, error } = await supabase
       .from('configuracoes_loja')
-      .select('nome_impressora')
+      .select('nome_impressora, tema')
       .eq('loja_id', loja.id)
       .maybeSingle();
 
-    if (!error && config?.nome_impressora) {
-      nomeImpressora = config.nome_impressora;
+    if (!error && config) {
+      if (config.nome_impressora) nomeImpressora = config.nome_impressora;
+      if (config.tema) tema = config.tema;
     }
 
     setForm({
@@ -290,10 +285,12 @@ export function DeveloperPanel() {
       telefone: loja.telefone || '',
       cnpj: loja.cnpj || '',
       endereco: loja.endereco || '',
+      logo_url: loja.logo_url || '',
       plano: loja.plano || 'teste',
       ativa: loja.ativa ?? true,
       nomeImpressora,
       quantidadeMesas: '0',
+      tema,
     });
 
     setModalOpen(true);
@@ -301,78 +298,57 @@ export function DeveloperPanel() {
 
   const handleChange = (field: keyof StoreFormData, value: string | boolean) => {
     setForm((prev) => {
-      const next = {
-        ...prev,
-        [field]: value,
-      };
-
-      if (field === 'nome' && !editingLoja) {
-        next.slug = makeSlug(String(value));
-      }
-
-      if (field === 'slug') {
-        next.slug = makeSlug(String(value));
-      }
-
+      const next = { ...prev, [field]: value };
+      if (field === 'nome' && !editingLoja) next.slug = makeSlug(String(value));
+      if (field === 'slug') next.slug = makeSlug(String(value));
       return next;
     });
   };
 
   const handleUserChange = (field: keyof UserFormData, value: string) => {
     setUserForm((prev) => {
-      const next = {
-        ...prev,
-        [field]: value,
-      };
-
-      if (field === 'username') {
-        next.username = normalizeUsername(value);
-      }
-
+      const next = { ...prev, [field]: value };
+      if (field === 'username') next.username = normalizeUsername(value);
       return next;
     });
   };
 
   const createInitialMesas = async (lojaId: string, quantidade: number) => {
     if (!quantidade || quantidade <= 0) return;
-
     const rows = Array.from({ length: quantidade }, (_, index) => {
       const numero = index + 1;
-
-      return {
-        loja_id: lojaId,
-        numero,
-        nome: `Mesa ${numero}`,
-        status: 'livre',
-        ativa: true,
-      };
+      return { loja_id: lojaId, numero, nome: `Mesa ${numero}`, status: 'livre', ativa: true };
     });
-
     const { error } = await supabase.from('mesas').insert(rows);
-
-    if (error) {
-      console.error('Erro ao criar mesas iniciais:', error);
-      toast.warning('Loja criada, mas não foi possível criar as mesas iniciais.');
-    }
+    if (error) toast.warning('Loja criada, mas não foi possível criar as mesas iniciais.');
   };
 
   const saveStore = async () => {
     const nome = form.nome.trim();
     const slug = makeSlug(form.slug || form.nome);
 
-    if (!nome) {
-      toast.error('Informe o nome da loja.');
-      return;
-    }
-
-    if (!slug) {
-      toast.error('Informe um slug válido.');
-      return;
-    }
+    if (!nome) return toast.error('Informe o nome da loja.');
+    if (!slug) return toast.error('Informe um slug válido.');
 
     setSaving(true);
 
     try {
+      let finalLogoUrl = form.logo_url;
+
+      if (logoFile) {
+        const fileExt = logoFile.name.split('.').pop();
+        const fileName = `${slug}-${Date.now()}.${fileExt}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('logos')
+          .upload(fileName, logoFile, { upsert: true });
+
+        if (uploadError) throw new Error('Erro ao fazer upload da logo: ' + uploadError.message);
+
+        const { data: publicUrlData } = supabase.storage.from('logos').getPublicUrl(fileName);
+        finalLogoUrl = publicUrlData.publicUrl;
+      }
+
       if (editingLoja) {
         const { error } = await supabase
           .from('lojas')
@@ -382,6 +358,7 @@ export function DeveloperPanel() {
             telefone: form.telefone.trim() || null,
             cnpj: form.cnpj.trim() || null,
             endereco: form.endereco.trim() || null,
+            logo_url: finalLogoUrl || null,
             plano: form.plano,
             ativa: form.ativa,
             updated_at: new Date().toISOString(),
@@ -398,31 +375,27 @@ export function DeveloperPanel() {
               nome_impressora: form.nomeImpressora.trim() || 'Cozinha',
               imprimir_automatico: true,
               largura_cupom_mm: 58,
+              tema: form.tema,
               updated_at: new Date().toISOString(),
             },
             { onConflict: 'loja_id' }
           );
 
-        if (configError) {
-          console.error('Erro ao atualizar configurações:', configError);
-          toast.warning('Loja atualizada, mas não foi possível atualizar a configuração.');
-        }
-
-        toast.success('Loja atualizada com sucesso!');
+        if (configError) toast.warning('Loja atualizada, mas não foi possível atualizar a configuração.');
+        else toast.success('Loja atualizada com sucesso!');
       } else {
         const { data: novaLoja, error } = await supabase
           .from('lojas')
-          .insert([
-            {
+          .insert([{
               nome,
               slug,
               telefone: form.telefone.trim() || null,
               cnpj: form.cnpj.trim() || null,
               endereco: form.endereco.trim() || null,
+              logo_url: finalLogoUrl || null,
               plano: form.plano,
               ativa: form.ativa,
-            },
-          ])
+          }])
           .select()
           .single();
 
@@ -432,309 +405,178 @@ export function DeveloperPanel() {
 
         const { error: configError } = await supabase
           .from('configuracoes_loja')
-          .insert([
-            {
+          .insert([{
               loja_id: lojaId,
               nome_impressora: form.nomeImpressora.trim() || 'Cozinha',
               imprimir_automatico: true,
               largura_cupom_mm: 58,
-            },
-          ]);
+              tema: form.tema,
+          }]);
 
-        if (configError) {
-          console.error('Erro ao criar configurações:', configError);
-          toast.warning('Loja criada, mas a configuração inicial não foi criada.');
-        }
-
+        if (configError) toast.warning('Loja criada, mas a configuração inicial não foi criada.');
         await createInitialMesas(lojaId, Number(form.quantidadeMesas || 0));
-
         toast.success('Loja criada com sucesso!');
       }
 
       setModalOpen(false);
       setEditingLoja(null);
       setForm(emptyForm);
+      setLogoFile(null);
       await fetchLojas();
     } catch (error: any) {
-      console.error('Erro ao salvar loja:', error);
-
-      if (String(error?.message || '').includes('duplicate key')) {
-        toast.error('Já existe uma loja com esse slug.');
-      } else {
-        toast.error('Não foi possível salvar a loja.');
-      }
+      if (String(error?.message || '').includes('duplicate key')) toast.error('Já existe uma loja com esse slug.');
+      else toast.error(error.message || 'Não foi possível salvar a loja.');
     } finally {
       setSaving(false);
     }
   };
 
-  const createStoreUser = async () => {
-    if (!selectedLojaUsers) return;
+  const editStoreUser = (usuario: LojaUsuario) => {
+    setEditingUser(usuario);
+    setUserForm({ nome: usuario.nome, username: usuario.username, senha: '', perfil: usuario.perfil });
+  };
 
-    const lojaIdAtual = selectedLojaUsers.id;
+  const saveStoreUser = async () => {
+    if (!selectedLojaUsers) return;
+    const { id: lojaIdAtual } = selectedLojaUsers;
     const nome = userForm.nome.trim();
     const username = normalizeUsername(userForm.username);
     const senha = userForm.senha.trim();
     const perfil = userForm.perfil;
 
-    if (!nome || !username || !senha) {
-      toast.error('Preencha nome, usuário e senha.');
-      return;
-    }
-
-    if (senha.length < 6) {
-      toast.error('A senha precisa ter no mínimo 6 caracteres.');
-      return;
-    }
-
-    const alreadyExists = lojaUsers.some(
-      (usuario) => normalizeUsername(usuario.username) === username
-    );
-
-    if (alreadyExists) {
-      toast.error('Já existe um usuário com esse nome nesta loja.');
-      return;
-    }
+    if (!nome || !username) return toast.error('Preencha nome e usuário.');
 
     setSavingUser(true);
-
     try {
-      const ok = await register(nome, username, senha, {
-        lojaId: lojaIdAtual,
-        perfil,
-      });
-
-      if (!ok) return;
-
+      if (editingUser) {
+        const { error } = await supabase.from('usuarios').update({ nome, username, perfil }).eq('id', editingUser.id);
+        if (error) throw error;
+        if (senha) {
+          if (senha.length < 6) { toast.error('Nova senha mín. 6 chars.'); setSavingUser(false); return; }
+          toast.warning('Perfil atualizado. Senha requer backend.');
+        } else toast.success('Usuário atualizado!');
+      } else {
+        if (!senha || senha.length < 6) { toast.error('Senha mín. 6 chars.'); setSavingUser(false); return; }
+        if (lojaUsers.some((u) => normalizeUsername(u.username) === username)) {
+          toast.error('Usuário já existe nesta loja.'); setSavingUser(false); return;
+        }
+        const ok = await register(nome, username, senha, { lojaId: lojaIdAtual, perfil });
+        if (!ok) throw new Error('Falha no registro.');
+        toast.success('Usuário criado!');
+      }
       setUserForm(emptyUserForm);
+      setEditingUser(null);
       await fetchLojaUsers(lojaIdAtual);
+    } catch (error) { toast.error('Erro ao salvar usuário.'); } 
+    finally { setSavingUser(false); }
+  };
 
-      navigate({
-        to: '/developer',
-        replace: true,
-      });
-    } catch (error) {
-      console.error('Erro ao criar usuário da loja:', error);
-      toast.error('Não foi possível criar o usuário.');
-    } finally {
-      setSavingUser(false);
-    }
+  const deleteStoreUser = async (usuario: LojaUsuario) => {
+    if (!window.confirm(`Excluir ${usuario.nome}?`)) return;
+    try {
+      const { data, error } = await supabase.functions.invoke('delete-operator', { body: { userId: usuario.id } });
+      if (error || data?.error) throw error || new Error(data?.error);
+      toast.success('Usuário excluído!');
+      if (selectedLojaUsers) await fetchLojaUsers(selectedLojaUsers.id);
+    } catch (error) { toast.error('Erro ao excluir usuário.'); }
   };
 
   const toggleStoreUserStatus = async (usuario: LojaUsuario) => {
     if (!selectedLojaUsers) return;
-
     const nextStatus = !usuario.ativo;
-
-    const { error: userError } = await supabase
-      .from('usuarios')
-      .update({
-        ativo: nextStatus,
-      })
-      .eq('id', usuario.id)
-      .eq('loja_id', selectedLojaUsers.id);
-
-    if (userError) {
-      console.error('Erro ao alterar usuário:', userError);
-      toast.error('Não foi possível alterar o status do usuário.');
-      return;
-    }
-
-    const { error: vinculoError } = await supabase
-      .from('usuario_lojas')
-      .update({
-        ativo: nextStatus,
-      })
-      .eq('usuario_id', usuario.id)
-      .eq('loja_id', selectedLojaUsers.id);
-
-    if (vinculoError) {
-      console.error('Erro ao alterar vínculo usuario_lojas:', vinculoError);
-    }
-
+    await supabase.from('usuarios').update({ ativo: nextStatus }).eq('id', usuario.id).eq('loja_id', selectedLojaUsers.id);
+    await supabase.from('usuario_lojas').update({ ativo: nextStatus }).eq('usuario_id', usuario.id).eq('loja_id', selectedLojaUsers.id);
     toast.success(nextStatus ? 'Usuário ativado!' : 'Usuário desativado!');
     await fetchLojaUsers(selectedLojaUsers.id);
   };
 
   const toggleStoreStatus = async (loja: Loja) => {
     const nextStatus = !loja.ativa;
-
-    const { error } = await supabase
-      .from('lojas')
-      .update({
-        ativa: nextStatus,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', loja.id);
-
-    if (error) {
-      console.error('Erro ao alterar status da loja:', error);
-      toast.error('Não foi possível alterar o status da loja.');
-      return;
-    }
-
-    toast.success(nextStatus ? 'Loja ativada!' : 'Loja desativada!');
-    await fetchLojas();
+    const { error } = await supabase.from('lojas').update({ ativa: nextStatus, updated_at: new Date().toISOString() }).eq('id', loja.id);
+    if (error) toast.error('Não foi possível alterar o status da loja.');
+    else { toast.success(nextStatus ? 'Loja ativada!' : 'Loja desativada!'); fetchLojas(); }
   };
 
   return (
-  <div className="min-h-screen bg-[#050505] text-white">
-    <div className="print:hidden">
-      <AppHeader />
-    </div>
-
-    <div className="pointer-events-none fixed inset-0 overflow-hidden">
-      <div className="absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-primary/20 blur-[130px]" />
-      <div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-blue-500/10 blur-[120px]" />
-    </div>
-
-    <header className="relative z-10 mt-14 border-b border-white/10 bg-black/50 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 md:flex-row md:items-center md:justify-between md:px-6">
-        <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-primary">
-            <ShieldCheck className="h-4 w-4" />
-            GK Orders Developer
-          </div>
-
-          <h1 className="text-3xl font-black tracking-tight md:text-4xl">
-            Painel do Desenvolvedor
-          </h1>
-
-          <p className="mt-2 max-w-2xl text-sm text-gray-400">
-            Gerencie lojas, planos, usuários e configurações iniciais do seu PDV multiloja.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <Link
-            to="/dashboard"
-            className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/10"
-          >
-            <ExternalLink className="h-4 w-4" />
-            Ir para operação
-          </Link>
-
-          <button
-            type="button"
-            onClick={openCreateModal}
-            className="inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-black text-black shadow-[0_0_25px_rgba(255,106,0,0.25)] transition hover:-translate-y-0.5 hover:shadow-[0_0_35px_rgba(255,106,0,0.4)]"
-          >
-            <Plus className="h-4 w-4" />
-            Nova loja
-          </button>
-        </div>
-      </div>
-    </header>
-
-    <main className="relative z-10 mx-auto max-w-7xl px-4 py-6 md:px-6">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <StatCard
-          label="Total de lojas"
-          value={String(stats.total)}
-          icon={Building2}
-          tone="primary"
-        />
-
-        <StatCard
-          label="Lojas ativas"
-          value={String(stats.ativas)}
-          icon={CheckCircle2}
-          tone="success"
-        />
-
-        <StatCard
-          label="Em teste"
-          value={String(stats.teste)}
-          icon={Wallet}
-          tone="warning"
-        />
-
-        <StatCard
-          label="Inativas"
-          value={String(stats.inativas)}
-          icon={XCircle}
-          tone="danger"
-        />
+    <div className="min-h-screen bg-[#050505] text-white">
+      <div className="print:hidden"><AppHeader /></div>
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute -top-40 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full bg-primary/20 blur-[130px]" />
+        <div className="absolute bottom-0 right-0 h-80 w-80 rounded-full bg-blue-500/10 blur-[120px]" />
       </div>
 
-      <section className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] shadow-2xl backdrop-blur-xl">
-        <div className="flex flex-col gap-4 border-b border-white/10 p-4 md:flex-row md:items-center md:justify-between md:p-5">
+      <header className="relative z-10 mt-14 border-b border-white/10 bg-black/50 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-5 md:flex-row md:items-center md:justify-between md:px-6">
           <div>
-            <h2 className="text-xl font-black">Lojas cadastradas</h2>
-
-            <p className="mt-1 text-sm text-gray-400">
-              Controle as unidades que usam o GK Orders.
-            </p>
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-primary">
+              <ShieldCheck className="h-4 w-4" /> GK Orders Developer
+            </div>
+            <h1 className="text-3xl font-black tracking-tight md:text-4xl">Painel do Desenvolvedor</h1>
+            <p className="mt-2 max-w-2xl text-sm text-gray-400">Gerencie lojas, planos, usuários e configurações.</p>
           </div>
+          <div className="flex flex-wrap gap-3">
+            <Link to="/dashboard" className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white hover:bg-white/10">
+              <ExternalLink className="h-4 w-4" /> Ir para operação
+            </Link>
+            <button onClick={openCreateModal} className="inline-flex items-center gap-2 rounded-2xl bg-primary px-4 py-3 text-sm font-black text-black shadow-[0_0_25px_rgba(255,106,0,0.25)] hover:-translate-y-0.5 hover:shadow-[0_0_35px_rgba(255,106,0,0.4)]">
+              <Plus className="h-4 w-4" /> Nova loja
+            </button>
+          </div>
+        </div>
+      </header>
 
+      <main className="relative z-10 mx-auto max-w-7xl px-4 py-6 md:px-6">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <StatCard label="Total de lojas" value={String(stats.total)} icon={Building2} tone="primary" />
+          <StatCard label="Lojas ativas" value={String(stats.ativas)} icon={CheckCircle2} tone="success" />
+          <StatCard label="Em teste" value={String(stats.teste)} icon={Wallet} tone="warning" />
+          <StatCard label="Inativas" value={String(stats.inativas)} icon={XCircle} tone="danger" />
+        </div>
+
+        <section className="mt-6 overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] shadow-2xl backdrop-blur-xl">
+          <div className="flex flex-col gap-4 border-b border-white/10 p-4 md:flex-row md:items-center md:justify-between md:p-5">
+            <div>
+              <h2 className="text-xl font-black">Lojas cadastradas</h2>
+            </div>
             <div className="relative w-full md:max-w-sm">
               <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
-              <input
-                value={searchTerm}
-                onChange={(event) => setSearchTerm(event.target.value)}
-                placeholder="Buscar loja, slug, plano..."
-                className="w-full rounded-2xl border border-white/10 bg-black/40 px-11 py-3 text-sm text-white outline-none placeholder:text-gray-500 focus:border-primary/60 focus:ring-4 focus:ring-primary/10"
-              />
+              <input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Buscar loja..." className="w-full rounded-2xl border border-white/10 bg-black/40 px-11 py-3 text-sm text-white focus:border-primary/60" />
             </div>
           </div>
 
           {loading ? (
-            <div className="flex min-h-[260px] items-center justify-center">
-              <div className="flex items-center gap-3 text-gray-400">
-                <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                Carregando lojas...
-              </div>
+            <div className="flex min-h-[260px] items-center justify-center text-gray-400">
+              <Loader2 className="h-5 w-5 animate-spin text-primary mr-2" /> Carregando...
             </div>
           ) : filteredLojas.length === 0 ? (
-            <div className="m-5 rounded-3xl border border-dashed border-white/10 bg-black/30 p-10 text-center">
-              <Store className="mx-auto mb-3 h-10 w-10 text-gray-500" />
-              <p className="text-lg font-black">Nenhuma loja encontrada</p>
-              <p className="mt-1 text-sm text-gray-400">
-                Crie sua primeira loja para começar a configurar o GK Orders.
-              </p>
-
-              <button
-                type="button"
-                onClick={openCreateModal}
-                className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-primary px-5 py-3 text-sm font-black text-black"
-              >
-                <Plus className="h-4 w-4" />
-                Criar loja
-              </button>
+            <div className="m-5 p-10 text-center text-gray-500">
+              <Store className="mx-auto mb-3 h-10 w-10" /> Nenhuma loja encontrada.
             </div>
           ) : (
             <div className="divide-y divide-white/10">
               {filteredLojas.map((loja) => (
-                <div
-                  key={loja.id}
-                  className="grid grid-cols-1 gap-4 bg-black/20 p-4 transition hover:bg-white/[0.04] md:grid-cols-[1.2fr_1fr_auto] md:items-center md:p-5"
-                >
+                <div key={loja.id} className="grid grid-cols-1 gap-4 bg-black/20 p-4 hover:bg-white/[0.04] md:grid-cols-[1.2fr_1fr_auto] md:items-center md:p-5">
                   <div className="flex min-w-0 items-center gap-4">
-                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
-                      <Store className="h-6 w-6" />
-                    </div>
-
+                    {loja.logo_url ? (
+                      <div className="h-14 w-14 shrink-0 overflow-hidden rounded-2xl border border-white/10">
+                        <img src={loja.logo_url} alt="Logo" className="h-full w-full object-cover" />
+                      </div>
+                    ) : (
+                      <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+                        <Store className="h-6 w-6" />
+                      </div>
+                    )}
                     <div className="min-w-0">
-                      <div className="mb-2 flex flex-wrap items-center gap-2">
-                        <span
-                          className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase tracking-wider ${
-                            loja.ativa
-                              ? 'border-green-500/30 bg-green-500/10 text-green-400'
-                              : 'border-red-500/30 bg-red-500/10 text-red-400'
-                          }`}
-                        >
+                      <div className="mb-2 flex gap-2">
+                        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-black uppercase ${loja.ativa ? 'border-green-500/30 bg-green-500/10 text-green-400' : 'border-red-500/30 bg-red-500/10 text-red-400'}`}>
                           {loja.ativa ? 'Ativa' : 'Inativa'}
                         </span>
-
-                        <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-primary">
+                        <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 text-[10px] font-black uppercase text-primary">
                           {loja.plano}
                         </span>
                       </div>
-
                       <h3 className="truncate text-xl font-black">{loja.nome}</h3>
-                      <p className="mt-1 truncate text-sm font-bold text-gray-400">
-                        /{loja.slug}
-                      </p>
+                      <p className="mt-1 truncate text-sm font-bold text-gray-400">/{loja.slug}</p>
                     </div>
                   </div>
 
@@ -746,44 +588,17 @@ export function DeveloperPanel() {
                   </div>
 
                   <div className="flex flex-wrap justify-start gap-2 md:justify-end">
-                    <button
-                      type="button"
-                      onClick={() => accessStore(loja)}
-                      className="inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-primary transition hover:bg-primary/20"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Acessar
+                    <button onClick={() => accessStore(loja)} className="inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-primary hover:bg-primary/20">
+                      <ExternalLink className="h-3.5 w-3.5" /> Acessar
                     </button>
-
-                    <button
-                      type="button"
-                      onClick={() => openUsersModal(loja)}
-                      className="inline-flex items-center gap-2 rounded-xl border border-purple-500/30 bg-purple-500/10 px-3 py-2 text-xs font-black text-purple-300 transition hover:bg-purple-500/20"
-                    >
-                      <Users className="h-3.5 w-3.5" />
-                      Usuários
+                    <button onClick={() => openUsersModal(loja)} className="inline-flex items-center gap-2 rounded-xl border border-purple-500/30 bg-purple-500/10 px-3 py-2 text-xs font-black text-purple-300 hover:bg-purple-500/20">
+                      <Users className="h-3.5 w-3.5" /> Usuários
                     </button>
-
-                    <button
-                      type="button"
-                      onClick={() => openEditModal(loja)}
-                      className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-black text-blue-400 transition hover:bg-blue-500/20"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      Editar
+                    <button onClick={() => openEditModal(loja)} className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-black text-blue-400 hover:bg-blue-500/20">
+                      <Pencil className="h-3.5 w-3.5" /> Editar
                     </button>
-
-                    <button
-                      type="button"
-                      onClick={() => toggleStoreStatus(loja)}
-                      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black transition ${
-                        loja.ativa
-                          ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
-                          : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'
-                      }`}
-                    >
-                      <Power className="h-3.5 w-3.5" />
-                      {loja.ativa ? 'Desativar' : 'Ativar'}
+                    <button onClick={() => toggleStoreStatus(loja)} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black ${loja.ativa ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'}`}>
+                      <Power className="h-3.5 w-3.5" /> {loja.ativa ? 'Desativar' : 'Ativar'}
                     </button>
                   </div>
                 </div>
@@ -798,6 +613,8 @@ export function DeveloperPanel() {
           editingLoja={editingLoja}
           form={form}
           saving={saving}
+          logoFile={logoFile}
+          onLogoChange={setLogoFile}
           onClose={() => setModalOpen(false)}
           onChange={handleChange}
           onSave={saveStore}
@@ -806,20 +623,9 @@ export function DeveloperPanel() {
 
       {usersModalOpen && selectedLojaUsers && (
         <UsersModal
-          loja={selectedLojaUsers}
-          users={lojaUsers}
-          loadingUsers={loadingUsers}
-          savingUser={savingUser}
-          userForm={userForm}
-          onClose={() => {
-            setUsersModalOpen(false);
-            setSelectedLojaUsers(null);
-            setLojaUsers([]);
-            setUserForm(emptyUserForm);
-          }}
-          onChange={handleUserChange}
-          onCreateUser={createStoreUser}
-          onToggleUser={toggleStoreUserStatus}
+          loja={selectedLojaUsers} users={lojaUsers} loadingUsers={loadingUsers} savingUser={savingUser} userForm={userForm} editingUser={editingUser}
+          onClose={() => { setUsersModalOpen(false); setSelectedLojaUsers(null); setLojaUsers([]); setUserForm(emptyUserForm); setEditingUser(null); }}
+          onChange={handleUserChange} onSaveUser={saveStoreUser} onToggleUser={toggleStoreUserStatus} onEditUser={editStoreUser} onDeleteUser={deleteStoreUser}
         />
       )}
     </div>
@@ -827,231 +633,131 @@ export function DeveloperPanel() {
 }
 
 function StoreModal({
-  editingLoja,
-  form,
-  saving,
-  onClose,
-  onChange,
-  onSave,
+  editingLoja, form, saving, logoFile, onLogoChange, onClose, onChange, onSave,
 }: {
-  editingLoja: Loja | null;
-  form: StoreFormData;
-  saving: boolean;
-  onClose: () => void;
-  onChange: (field: keyof StoreFormData, value: string | boolean) => void;
-  onSave: () => void;
+  editingLoja: Loja | null; form: StoreFormData; saving: boolean; logoFile: File | null;
+  onLogoChange: (file: File | null) => void; onClose: () => void; onChange: (field: keyof StoreFormData, value: string | boolean) => void; onSave: () => void;
 }) {
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
       <div className="max-h-[92vh] w-full max-w-3xl overflow-hidden rounded-3xl border border-white/10 bg-[#101010] text-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-white/10 p-5">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.2em] text-primary">
-              {editingLoja ? 'Editar loja' : 'Nova loja'}
-            </p>
-            <h3 className="mt-1 text-2xl font-black">
-              {editingLoja ? form.nome : 'Cadastrar unidade'}
-            </h3>
+            <p className="text-xs font-black uppercase tracking-[0.2em] text-primary">{editingLoja ? 'Editar loja' : 'Nova loja'}</p>
+            <h3 className="mt-1 text-2xl font-black">{editingLoja ? form.nome : 'Cadastrar unidade'}</h3>
           </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-xl p-2 text-gray-400 transition hover:bg-white/10 hover:text-white"
-          >
-            <XCircle className="h-5 w-5" />
-          </button>
+          <button onClick={onClose} className="rounded-xl p-2 text-gray-400 hover:bg-white/10 hover:text-white"><XCircle className="h-5 w-5" /></button>
         </div>
 
         <div className="max-h-[68vh] overflow-y-auto p-5">
           <div className="rounded-3xl border border-white/10 bg-black/30 p-4">
-            <div className="mb-4 flex items-center gap-3 border-b border-white/10 pb-4">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
-                <Building2 className="h-6 w-6" />
+            <div className="mb-4 flex items-center gap-4 border-b border-white/10 pb-4">
+              <div className="relative flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border-2 border-dashed border-white/20 bg-black/50 group hover:border-primary/50 transition">
+                {(logoFile || form.logo_url) && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onLogoChange(null);
+                      onChange('logo_url', '');
+                    }}
+                    className="absolute z-20 top-1 right-1 bg-red-500/80 hover:bg-red-500 p-1 rounded-full text-white backdrop-blur-sm shadow-md"
+                    title="Remover logo"
+                  >
+                    <XCircle className="w-3 h-3" />
+                  </button>
+                )}
+                <input
+                  type="file" accept="image/*"
+                  className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+                  onChange={(e) => { if (e.target.files && e.target.files[0]) onLogoChange(e.target.files[0]); }}
+                />
+                {logoFile || form.logo_url ? (
+                  <img src={logoFile ? URL.createObjectURL(logoFile) : form.logo_url} alt="Logo" className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex flex-col items-center text-gray-500 pointer-events-none">
+                    <UploadCloud className="mb-1 h-6 w-6" />
+                    <span className="text-[9px] font-black uppercase">Logo</span>
+                  </div>
+                )}
               </div>
-
               <div>
                 <p className="font-black">Dados principais da loja</p>
-                <p className="text-xs text-gray-400">
-                  Informações usadas para identificar e organizar a unidade.
-                </p>
+                <p className="text-xs text-gray-400">Informações e logo da unidade.</p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <Field label="Nome da loja">
-                <input
-                  value={form.nome}
-                  onChange={(event) => onChange('nome', event.target.value)}
-                  placeholder="Ex: Burguer House"
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Slug da loja">
-                <input
-                  value={form.slug}
-                  onChange={(event) => onChange('slug', event.target.value)}
-                  placeholder="burguer-house"
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="Telefone">
-                <input
-                  value={form.telefone}
-                  onChange={(event) => onChange('telefone', event.target.value)}
-                  placeholder="(19) 99999-9999"
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field label="CNPJ">
-                <input
-                  value={form.cnpj}
-                  onChange={(event) => onChange('cnpj', event.target.value)}
-                  placeholder="00.000.000/0001-00"
-                  className={inputClass}
-                />
-              </Field>
-
-              <div className="md:col-span-2">
-                <Field label="Endereço">
-                  <textarea
-                    value={form.endereco}
-                    onChange={(event) => onChange('endereco', event.target.value)}
-                    placeholder="Rua, número, bairro, cidade..."
-                    className={`${inputClass} min-h-[90px] resize-none`}
-                  />
-                </Field>
-              </div>
+              <Field label="Nome da loja"><input value={form.nome} onChange={(e) => onChange('nome', e.target.value)} className={inputClass} /></Field>
+              <Field label="Slug da loja"><input value={form.slug} onChange={(e) => onChange('slug', e.target.value)} className={inputClass} /></Field>
+              <Field label="Telefone"><input value={form.telefone} onChange={(e) => onChange('telefone', e.target.value)} className={inputClass} /></Field>
+              <Field label="CNPJ"><input value={form.cnpj} onChange={(e) => onChange('cnpj', e.target.value)} className={inputClass} /></Field>
+              <div className="md:col-span-2"><Field label="Endereço"><textarea value={form.endereco} onChange={(e) => onChange('endereco', e.target.value)} className={`${inputClass} min-h-[90px]`} /></Field></div>
             </div>
           </div>
 
           <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="rounded-3xl border border-white/10 bg-black/30 p-4">
               <div className="mb-4 flex items-center gap-3 border-b border-white/10 pb-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-blue-400">
-                  <Settings className="h-6 w-6" />
-                </div>
-
-                <div>
-                  <p className="font-black">Configurações</p>
-                  <p className="text-xs text-gray-400">
-                    Plano, status e impressão.
-                  </p>
-                </div>
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-500/20 bg-blue-500/10 text-blue-400"><Settings className="h-6 w-6" /></div>
+                <div><p className="font-black">Configurações</p><p className="text-xs text-gray-400">Plano, status e impressão.</p></div>
               </div>
 
               <div className="space-y-4">
                 <Field label="Plano">
-                  <select
-                    value={form.plano}
-                    onChange={(event) => onChange('plano', event.target.value)}
-                    className={inputClass}
-                  >
-                    <option value="teste">Teste</option>
-                    <option value="basico">Básico</option>
-                    <option value="pro">Pro</option>
-                    <option value="premium">Premium</option>
-                    <option value="bloqueado">Bloqueado</option>
+                  <select value={form.plano} onChange={(e) => onChange('plano', e.target.value)} className={inputClass}>
+                    <option value="teste">Teste</option><option value="basico">Básico</option><option value="pro">Pro</option><option value="premium">Premium</option><option value="bloqueado">Bloqueado</option>
                   </select>
                 </Field>
-
-                <Field label="Nome da impressora">
-                  <input
-                    value={form.nomeImpressora}
-                    onChange={(event) => onChange('nomeImpressora', event.target.value)}
-                    placeholder="Cozinha"
-                    className={inputClass}
-                  />
+                <Field label="Nome da impressora"><input value={form.nomeImpressora} onChange={(e) => onChange('nomeImpressora', e.target.value)} className={inputClass} /></Field>
+                
+                <Field label="Cor do Sistema (Tema)">
+                  <div className="flex flex-wrap gap-3 mt-2">
+                    {[
+                      { id: 'laranja', bg: 'bg-[#ff6a00]' },
+                      { id: 'verde', bg: 'bg-[#22c55e]' },
+                      { id: 'azul', bg: 'bg-[#3b82f6]' },
+                      { id: 'roxo', bg: 'bg-[#8b5cf6]' },
+                      { id: 'vermelho', bg: 'bg-[#e11d48]' }
+                    ].map((cor) => (
+                      <button
+                        key={cor.id}
+                        type="button"
+                        onClick={() => onChange('tema', cor.id)}
+                        className={`w-10 h-10 rounded-full ${cor.bg} transition-all hover:scale-110 shadow-lg ${
+                          form.tema === cor.id ? 'ring-4 ring-white ring-offset-2 ring-offset-black scale-110' : 'opacity-70'
+                        }`}
+                        title={`Tema ${cor.id}`}
+                      />
+                    ))}
+                  </div>
                 </Field>
 
-                <button
-                  type="button"
-                  onClick={() => onChange('ativa', !form.ativa)}
-                  className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm font-black transition ${
-                    form.ativa
-                      ? 'border-green-500/30 bg-green-500/10 text-green-400'
-                      : 'border-red-500/30 bg-red-500/10 text-red-400'
-                  }`}
-                >
-                  <span>{form.ativa ? 'Loja ativa' : 'Loja inativa'}</span>
-                  <Power className="h-4 w-4" />
+                <button type="button" onClick={() => onChange('ativa', !form.ativa)} className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-sm font-black ${form.ativa ? 'border-green-500/30 bg-green-500/10 text-green-400' : 'border-red-500/30 bg-red-500/10 text-red-400'}`}>
+                  <span>{form.ativa ? 'Loja ativa' : 'Loja inativa'}</span><Power className="h-4 w-4" />
                 </button>
               </div>
             </div>
 
             <div className="rounded-3xl border border-white/10 bg-black/30 p-4">
               <div className="mb-4 flex items-center gap-3 border-b border-white/10 pb-4">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/10 text-amber-400">
-                  <LayoutGrid className="h-6 w-6" />
-                </div>
-
-                <div>
-                  <p className="font-black">Mesas iniciais</p>
-                  <p className="text-xs text-gray-400">
-                    Geradas automaticamente na criação.
-                  </p>
-                </div>
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/10 text-amber-400"><LayoutGrid className="h-6 w-6" /></div>
+                <div><p className="font-black">Mesas iniciais</p><p className="text-xs text-gray-400">Geradas automaticamente na criação.</p></div>
               </div>
-
               {!editingLoja ? (
-                <Field label="Quantidade de mesas">
-                  <input
-                    value={form.quantidadeMesas}
-                    onChange={(event) => onChange('quantidadeMesas', event.target.value)}
-                    type="number"
-                    min="0"
-                    placeholder="10"
-                    className={inputClass}
-                  />
-                </Field>
+                <Field label="Quantidade de mesas"><input value={form.quantidadeMesas} onChange={(e) => onChange('quantidadeMesas', e.target.value)} type="number" min="0" className={inputClass} /></Field>
               ) : (
-                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-gray-400">
-                  A quantidade de mesas iniciais só pode ser definida na criação da loja.
-                  Depois, edite as mesas dentro da operação da unidade.
-                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm text-gray-400">A quantidade de mesas iniciais só pode ser definida na criação da loja. Depois, edite as mesas dentro da operação da unidade.</div>
               )}
-
-              <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/10 p-4">
-                <p className="text-sm font-black text-primary">
-                  Configuração inicial
-                </p>
-                <p className="mt-1 text-xs leading-relaxed text-gray-300">
-                  A loja será criada com impressão automática habilitada,
-                  cupom 58mm e configuração padrão de cozinha.
-                </p>
-              </div>
             </div>
           </div>
         </div>
 
         <div className="flex flex-col gap-3 border-t border-white/10 p-5 sm:flex-row">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-4 text-sm font-bold text-white transition hover:bg-white/10"
-          >
-            Cancelar
-          </button>
-
-          <button
-            type="button"
-            onClick={onSave}
-            disabled={saving}
-            className="flex-1 rounded-2xl bg-primary py-4 text-sm font-black text-black transition hover:-translate-y-0.5 disabled:opacity-60"
-          >
-            {saving ? (
-              <span className="inline-flex items-center justify-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Salvando...
-              </span>
-            ) : editingLoja ? (
-              'Salvar alterações'
-            ) : (
-              'Criar loja'
-            )}
+          <button type="button" onClick={onClose} className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-4 text-sm font-bold text-white">Cancelar</button>
+          <button type="button" onClick={onSave} disabled={saving} className="flex-1 rounded-2xl bg-primary py-4 text-sm font-black text-black disabled:opacity-60">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mx-auto" /> : editingLoja ? 'Salvar alterações' : 'Criar loja'}
           </button>
         </div>
       </div>
@@ -1065,20 +771,26 @@ function UsersModal({
   loadingUsers,
   savingUser,
   userForm,
+  editingUser,
   onClose,
   onChange,
-  onCreateUser,
+  onSaveUser,
   onToggleUser,
+  onEditUser,
+  onDeleteUser,
 }: {
   loja: Loja;
   users: LojaUsuario[];
   loadingUsers: boolean;
   savingUser: boolean;
   userForm: UserFormData;
+  editingUser: LojaUsuario | null;
   onClose: () => void;
   onChange: (field: keyof UserFormData, value: string) => void;
-  onCreateUser: () => void;
+  onSaveUser: () => void;
   onToggleUser: (usuario: LojaUsuario) => void;
+  onEditUser: (usuario: LojaUsuario) => void;
+  onDeleteUser: (usuario: LojaUsuario) => void;
 }) {
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
@@ -1110,9 +822,9 @@ function UsersModal({
                 </div>
 
                 <div>
-                  <p className="font-black">Novo usuário</p>
+                  <p className="font-black">{editingUser ? 'Editar usuário' : 'Novo usuário'}</p>
                   <p className="text-xs text-gray-400">
-                    Crie o acesso do operador desta loja.
+                    {editingUser ? 'Atualizando dados do operador.' : 'Crie o acesso do operador desta loja.'}
                   </p>
                 </div>
               </div>
@@ -1142,14 +854,14 @@ function UsersModal({
                   </div>
                 </Field>
 
-                <Field label="Senha">
+                <Field label={editingUser ? 'Nova Senha (opcional)' : 'Senha'}>
                   <div className="relative">
                     <KeyRound className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
                     <input
                       value={userForm.senha}
                       onChange={(event) => onChange('senha', event.target.value)}
                       type="password"
-                      placeholder="Mínimo 6 caracteres"
+                      placeholder={editingUser ? 'Deixe em branco para manter' : 'Mínimo 6 caracteres'}
                       className={`${inputClass} pl-11`}
                     />
                   </div>
@@ -1163,29 +875,41 @@ function UsersModal({
                   >
                     <option value="admin_loja">Admin da loja</option>
                     <option value="operador">Operador</option>
-                    <option value="caixa">Caixa</option>
-                    <option value="cozinha">Cozinha</option>
                   </select>
                 </Field>
 
                 <button
                   type="button"
-                  onClick={onCreateUser}
+                  onClick={onSaveUser}
                   disabled={savingUser}
                   className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-4 text-sm font-black text-black transition hover:-translate-y-0.5 disabled:opacity-60"
                 >
                   {savingUser ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Criando...
+                      Salvando...
                     </>
                   ) : (
                     <>
                       <UserPlus className="h-4 w-4" />
-                      Criar usuário
+                      {editingUser ? 'Salvar Alterações' : 'Criar usuário'}
                     </>
                   )}
                 </button>
+
+                {editingUser && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onChange('nome', '');
+                      onChange('username', '');
+                      onChange('senha', '');
+                    }}
+                    className="flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-transparent py-4 text-sm font-black text-gray-400 transition hover:bg-white/5"
+                  >
+                    Cancelar edição
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -1252,18 +976,38 @@ function UsersModal({
                         </p>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => onToggleUser(usuario)}
-                        className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-black transition ${
-                          usuario.ativo
-                            ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
-                            : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'
-                        }`}
-                      >
-                        <Power className="h-3.5 w-3.5" />
-                        {usuario.ativo ? 'Desativar' : 'Ativar'}
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onEditUser(usuario)}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-black text-blue-400 transition hover:bg-blue-500/20"
+                          title="Editar"
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        
+                        <button
+                          type="button"
+                          onClick={() => onDeleteUser(usuario)}
+                          className="inline-flex items-center justify-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-black text-red-400 transition hover:bg-red-500/20"
+                          title="Excluir"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => onToggleUser(usuario)}
+                          className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-black transition ${
+                            usuario.ativo
+                              ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
+                              : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'
+                          }`}
+                        >
+                          <Power className="h-3.5 w-3.5" />
+                          {usuario.ativo ? 'Desativar' : 'Ativar'}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
