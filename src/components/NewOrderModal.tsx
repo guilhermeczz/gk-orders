@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
 import type { OrderItem, OrderItemAddition, Product, Mesa } from '@/lib/types';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
 import {
   ChevronDown,
   Store,
@@ -414,6 +415,7 @@ export function NewOrderModal({
       toast.error('O carrinho está vazio.');
       return;
     }
+    
 
     const resolvedOrderType =
       orderType || (isMesaFlow || selectedMesa ? 'Local' : isForcedPickup ? 'Retirada' : '');
@@ -445,7 +447,47 @@ export function NewOrderModal({
           selectedMesa?.id ?? mesaId ?? null
         );
       }
+// =====================================================================
+      // 🖨️ DISPARO PARA A IMPRESSORA DA COZINHA (Tabela print_jobs)
+      // =====================================================================
+      try {
+        let nomeAlvo = customerName.trim();
+        if (selectedMesa) {
+          nomeAlvo = `Mesa ${selectedMesa}`;
+        } else if (isMesaFlow) {
+          nomeAlvo = `Mesa`; 
+        }
 
+        const itensCozinha = cartItems.map((item: any) => ({
+          nome: item.productName || item.name,
+          quantidade: item.quantity,
+          adicionais: (item.additions || []).map((add: any) => ({
+             nome: add.productName || add.name,
+             quantidade: add.quantity
+          }))
+        }));
+
+        const obsGeral = cartItems
+          .map((item: any) => item.observation)
+          .filter((obs: string) => obs && obs.trim() !== '')
+          .join(' | ');
+
+        const { error: printError } = await supabase.from('print_jobs').insert({
+          loja_id: lojaAtualId,
+          tipo_impressao: 'pedido_cozinha',
+          conteudo: {
+            numeroPedido: appendOrderId ? `ADC-${appendOrderId}` : "NOVO",
+            clienteOuMesa: nomeAlvo,
+            itens: itensCozinha,
+            observacao: obsGeral
+          }
+        });
+
+        if (printError) console.error('Erro impressora:', printError);
+      } catch (err) {
+        console.error('Erro no bloco de impressao:', err);
+      }
+      // =====================================================================
       onClose();
     } catch (err) {
       console.error(err);
