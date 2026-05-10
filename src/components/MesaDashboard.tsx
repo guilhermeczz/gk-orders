@@ -1669,9 +1669,65 @@ function MesaDetailsModal({
     });
   }, [orders, mesa.numero]);
 
-  const handlePrintConta = (alvo: string) => {
-    toast.success(`Conta de ${alvo} enviada para impressão!`);
-    setPrintModalOpen(false);
+  const handlePrintConta = async (alvo: string) => {
+    const loadingToast = toast.loading(`Enviando ${alvo} para a impressora...`);
+    
+    try {
+      let tipo_impressao = 'conta_comanda';
+      let itensParaImprimir = [];
+      let totalGeral = 0;
+      let clienteOuMesaStr = alvo;
+
+      // Se for a mesa inteira, junta todos os itens de todas as comandas
+      if (alvo === 'Mesa Completa') {
+        tipo_impressao = 'conta_mesa';
+        clienteOuMesaStr = `Mesa ${mesa.numero}`;
+        itensParaImprimir = comandas.flatMap(c => c.groupedItems);
+        totalGeral = total;
+      } else {
+        // Se for só uma comanda, pega só os itens dela
+        const comanda = comandas.find(c => c.nome === alvo);
+        if (comanda) {
+          itensParaImprimir = comanda.groupedItems;
+          totalGeral = comanda.total;
+        }
+      }
+
+      // Formata os itens pro padrão exato que o seu Node.js espera ler
+      const itensFormatados = itensParaImprimir.map((item: any) => ({
+        nome: item.productName,
+        quantidade: item.quantity,
+        total: item.totalValue,
+        adicionais: (item.additions || []).map((add: any) => ({
+           nome: add.productName,
+           quantidade: add.quantity,
+           // Garante que o total do adicional seja Qtd * Preço Unitário
+           total: add.quantity * (add.unitPrice || (add.totalValue / add.quantity) || 0) 
+        }))
+      }));
+
+      const conteudo = {
+        clienteOuMesa: clienteOuMesaStr,
+        itens: itensFormatados,
+        totalGeral: totalGeral
+      };
+
+      // Dispara o Gatilho: Salva na fila de impressão do Supabase!
+      const { error } = await supabase.from('print_jobs').insert({
+        loja_id: mesa.loja_id, // Puxa o ID da loja automaticamente
+        tipo_impressao,
+        conteudo
+      });
+
+      if (error) throw error;
+
+      toast.success(`Enviado para a impressora com sucesso!`, { id: loadingToast });
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro ao comunicar com o servidor de impressão.', { id: loadingToast });
+    } finally {
+      setPrintModalOpen(false);
+    }
   };
 
   return (
