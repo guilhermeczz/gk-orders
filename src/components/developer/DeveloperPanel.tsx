@@ -25,6 +25,7 @@ import {
   BadgeCheck,
   Trash2,
   UploadCloud,
+  AlertTriangle,
 } from 'lucide-react';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { toast } from 'sonner';
@@ -158,6 +159,11 @@ export function DeveloperPanel() {
   const [savingUser, setSavingUser] = useState(false);
   const [userForm, setUserForm] = useState<UserFormData>(emptyUserForm);
   const [editingUser, setEditingUser] = useState<LojaUsuario | null>(null);
+
+  // NOVO ESTADO: Controle do modal de exclusão da loja
+  const [deleteStoreModalOpen, setDeleteStoreModalOpen] = useState(false);
+  const [deletingLoja, setDeletingLoja] = useState<Loja | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchLojas = async () => {
     setLoading(true);
@@ -294,6 +300,46 @@ export function DeveloperPanel() {
     });
 
     setModalOpen(true);
+  };
+
+  // NOVA FUNÇÃO: Prepara a exclusão da loja
+  const confirmDeleteStore = (loja: Loja) => {
+    setDeletingLoja(loja);
+    setDeleteStoreModalOpen(true);
+  };
+
+  // NOVA FUNÇÃO: Executa a exclusão da loja
+  const handleDeleteStore = async () => {
+    if (!deletingLoja) return;
+
+    setIsDeleting(true);
+    try {
+      // Deleta a loja. Se você tiver as chaves estrangeiras com "ON DELETE CASCADE", 
+      // o Supabase cuidará de deletar os produtos, pedidos, etc, associados.
+      const { error } = await supabase
+        .from('lojas')
+        .delete()
+        .eq('id', deletingLoja.id);
+
+      if (error) {
+        throw error;
+      }
+
+      toast.success('Loja excluída com sucesso!');
+      setDeleteStoreModalOpen(false);
+      setDeletingLoja(null);
+      await fetchLojas();
+    } catch (error: any) {
+      console.error('Erro ao deletar loja:', error);
+      // Alguns bancos travam a exclusão se houver usuários/produtos amarrados sem cascade
+      if (error.code === '23503') {
+        toast.error('Não é possível excluir a loja pois ela possui registros vinculados (usuários, produtos, etc).');
+      } else {
+        toast.error('Ocorreu um erro ao excluir a loja.');
+      }
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleChange = (field: keyof StoreFormData, value: string | boolean) => {
@@ -600,6 +646,10 @@ export function DeveloperPanel() {
                     <button onClick={() => toggleStoreStatus(loja)} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black ${loja.ativa ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'}`}>
                       <Power className="h-3.5 w-3.5" /> {loja.ativa ? 'Desativar' : 'Ativar'}
                     </button>
+                    {/* NOVO BOTÃO DE EXCLUIR */}
+                    <button onClick={() => confirmDeleteStore(loja)} className="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-transparent px-3 py-2 text-xs font-black text-red-400 hover:bg-red-500/10 transition">
+                      <Trash2 className="h-3.5 w-3.5" /> Excluir
+                    </button>
                   </div>
                 </div>
               ))}
@@ -627,6 +677,52 @@ export function DeveloperPanel() {
           onClose={() => { setUsersModalOpen(false); setSelectedLojaUsers(null); setLojaUsers([]); setUserForm(emptyUserForm); setEditingUser(null); }}
           onChange={handleUserChange} onSaveUser={saveStoreUser} onToggleUser={toggleStoreUserStatus} onEditUser={editStoreUser} onDeleteUser={deleteStoreUser}
         />
+      )}
+
+      {/* NOVO MODAL: CONFIRMAÇÃO DE EXCLUSÃO DA LOJA */}
+      {deleteStoreModalOpen && deletingLoja && (
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-sm overflow-hidden rounded-3xl border border-red-500/20 bg-[#101010] text-white shadow-2xl animate-slide-up">
+            <div className="flex flex-col items-center justify-center p-6 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10 text-red-500">
+                <AlertTriangle className="h-8 w-8" />
+              </div>
+              <h3 className="text-xl font-black">Excluir Loja</h3>
+              <p className="mt-2 text-sm text-gray-400">
+                Tem certeza que deseja excluir a loja <span className="font-bold text-white">{deletingLoja.nome}</span>?
+              </p>
+              
+              <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-left">
+                <p className="text-[11px] font-bold text-red-400 uppercase tracking-wider mb-1">Aviso Crítico</p>
+                <p className="text-xs text-red-300">
+                  Esta ação é irreversível. Certifique-se de que a loja não possui registros importantes vinculados a ela.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-white/10 p-5 sm:flex-row">
+              <button 
+                type="button" 
+                onClick={() => {
+                  setDeleteStoreModalOpen(false);
+                  setDeletingLoja(null);
+                }} 
+                className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-3 text-sm font-bold text-white hover:bg-white/10"
+              >
+                Cancelar
+              </button>
+              <button 
+                type="button" 
+                onClick={handleDeleteStore} 
+                disabled={isDeleting} 
+                className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-red-600 py-3 text-sm font-black text-white hover:bg-red-500 disabled:opacity-60"
+              >
+                {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Sim, Excluir
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

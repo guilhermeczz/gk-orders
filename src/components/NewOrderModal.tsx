@@ -88,9 +88,6 @@ export function NewOrderModal({
   const isForcedPickup = forceOrderType === 'Retirada';
   const isTopAvulsoFlow = !isAppending && !isEditing && !isMesaFlow && !isForcedPickup;
 
-  // =========================================================================
-  // OTIMIZAÇÃO DE PERFORMANCE: Dicionários Map
-  // =========================================================================
   const productsMap = useMemo(() => {
     const map = new Map<string, Product>();
     products.forEach((p) => map.set(String(p.id), p));
@@ -121,7 +118,6 @@ export function NewOrderModal({
     [productsMap, categoriesMap]
   );
 
-  // INTELIGÊNCIA: Se a categoria tiver "adicional", "adicionais" ou "extra", ele entende.
   const isAdditionalProduct = useCallback(
     (productId: string | number) => {
       const catName = normalizeText(getCategoryNameByProductId(productId));
@@ -130,11 +126,9 @@ export function NewOrderModal({
     [getCategoryNameByProductId, normalizeText]
   );
 
-  // INTELIGÊNCIA: Lista Negra. Se for bebida/água/suco, esconde o botão de adicional. Senão, mostra!
   const productAcceptsAdditions = useCallback(
     (productId: string | number) => {
       const categoryName = normalizeText(getCategoryNameByProductId(productId));
-      
       const isDrinkOrDessert = 
         categoryName.includes('bebida') || 
         categoryName.includes('refrigerante') || 
@@ -144,8 +138,7 @@ export function NewOrderModal({
         categoryName.includes('sobremesa');
 
       if (isDrinkOrDessert || isAdditionalProduct(productId)) return false;
-
-      return true; // Qualquer outra comida vai aceitar adicionais automaticamente!
+      return true;
     },
     [getCategoryNameByProductId, normalizeText, isAdditionalProduct]
   );
@@ -156,8 +149,6 @@ export function NewOrderModal({
     },
     [productsMap]
   );
-
-  // =========================================================================
 
   const mesasDisponiveis = useMemo(() => {
     return (mesas ?? [])
@@ -268,9 +259,6 @@ export function NewOrderModal({
       });
   }, [products, isAdditionalProduct]);
 
-  // =========================================================================
-  // OTIMIZAÇÃO: GroupedProducts agora varre a lista só 1 vez
-  // =========================================================================
   const groupedProducts = useMemo(() => {
     const grouped: Record<string, Product[]> = {};
 
@@ -440,7 +428,7 @@ export function NewOrderModal({
     try {
       const safeCustomerName =
         customerName.trim() ||
-        (isForcedPickup ? 'Retirada' : selectedMesa ? `Mesa ${selectedMesa.numero}` : 'Pedido');
+        (isForcedPickup ? 'Retirada' : selectedMesa ? `Mesa ${selectedMesa.numero}` : mesaNumero ? `Mesa ${mesaNumero}` : 'Pedido');
 
       const finalNotes = `[${resolvedOrderType.toUpperCase()}] ${notes}`.trim();
 
@@ -551,30 +539,20 @@ export function NewOrderModal({
                       ))}
                     </div>
                   )}
-
-                  {isTopAvulsoFlow && (
-                    <p className="mt-3 text-xs text-amber-400">
-                      Pedidos abertos por aqui são sempre vinculados a uma mesa criada. Para retirada, use a aba principal de retirada.
-                    </p>
-                  )}
                 </div>
               )}
 
               <div className="bg-card p-6 rounded-3xl border border-border/60 shadow-sm">
                 <h3 className="font-semibold text-muted-foreground mb-4 uppercase tracking-wider text-sm">
                   {isMesaFlow || selectedMesa
-                    ? '1. Mesa'
+                    ? '1. Comanda / Mesa'
                     : isForcedPickup
                       ? '2. Cliente'
                       : '2. Cliente ou Mesa'}
                 </h3>
 
                 <p className="text-sm text-muted-foreground mb-1">
-                  {isForcedPickup
-                    ? 'Cliente da retirada:'
-                    : isMesaFlow || selectedMesa
-                      ? 'Mesa selecionada:'
-                      : 'Nome na comanda:'}
+                  Nome registrado no pedido:
                 </p>
 
                 <p className="font-bold text-xl text-foreground bg-background p-4 rounded-xl border border-border/40">
@@ -661,7 +639,7 @@ export function NewOrderModal({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 mb-8 bg-card p-5 sm:p-6 rounded-3xl border border-border/60 shadow-sm">
                     <div>
                       <label className="text-xs font-bold text-muted-foreground mb-2 block uppercase tracking-wider">
-                        {isTopAvulsoFlow ? 'Selecionar Mesa' : isForcedPickup ? 'Cliente da retirada' : 'Cliente ou Mesa'}
+                        {isTopAvulsoFlow ? 'Selecionar Mesa' : isForcedPickup ? 'Cliente da retirada' : mesaNumero ? 'Comanda / Cliente' : 'Cliente ou Mesa'}
                       </label>
 
                       {isTopAvulsoFlow ? (
@@ -776,12 +754,14 @@ export function NewOrderModal({
                               setFieldErrors((prev) => ({ ...prev, customerName: false }));
                             }
                           }}
-                          disabled={!!mesaNumero}
+                          // AQUI ESTÁ A CORREÇÃO: O campo não trava mais ao ter mesaNumero.
+                          // Ele só trava se o garçom clicar no lápis para "Editar um item" de um pedido antigo.
+                          disabled={!!appendOrderId} 
                           placeholder={
                             isForcedPickup
                               ? 'Nome do cliente da retirada...'
                               : mesaNumero
-                                ? `Mesa ${mesaNumero}`
+                                ? `Ex: Maria (Ou deixe Mesa ${mesaNumero})`
                                 : 'Nome ou mesa...'
                           }
                           className={`w-full bg-white text-black placeholder:text-gray-400 border rounded-2xl px-5 py-4 outline-none transition-all font-medium text-[15px] disabled:opacity-70 ${
