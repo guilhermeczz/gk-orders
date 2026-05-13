@@ -14,6 +14,7 @@ import {
   ShoppingBag,
   Info,
   AlertTriangle,
+  Truck,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 
@@ -29,7 +30,7 @@ interface NewOrderModalProps {
   appendBaseNotes?: string;
   mesaId?: string | null;
   mesaNumero?: number | null;
-  forceOrderType?: 'Local' | 'Retirada';
+  forceOrderType?: 'Local' | 'Retirada' | 'Delivery';
   hideOrderTypeSelector?: boolean;
 }
 
@@ -43,6 +44,20 @@ const categoryDisplayOrder = [
   'Adicionais',
   'Bebidas',
 ];
+
+const emptyDeliveryData = {
+  whatsapp: '',
+  rua: '',
+  numero: '',
+  bairro: '',
+  complemento: '',
+  referencia: '',
+  taxaEntrega: '',
+  tempoEstimado: '',
+  statusPagamento: 'a_cobrar' as 'pago' | 'a_cobrar',
+  formaPagamento: 'dinheiro' as 'dinheiro' | 'pix' | 'credito' | 'debito',
+  trocoPara: '',
+};
 
 export function NewOrderModal({
   open,
@@ -74,6 +89,7 @@ export function NewOrderModal({
   const [showSummary, setShowSummary] = useState(false);
   const [selectedMesaId, setSelectedMesaId] = useState<string>('');
   const [mesaDropdownAberto, setMesaDropdownAberto] = useState(false);
+  const [deliveryData, setDeliveryData] = useState(emptyDeliveryData);
 
   const [fieldErrors, setFieldErrors] = useState<{
     customerName?: boolean;
@@ -87,7 +103,8 @@ export function NewOrderModal({
   const isEditing = !!editOrderId;
   const isMesaFlow = !!mesaId || !!mesaNumero;
   const isForcedPickup = forceOrderType === 'Retirada';
-  const isTopAvulsoFlow = !isAppending && !isEditing && !isMesaFlow && !isForcedPickup;
+  const isForcedDelivery = forceOrderType === 'Delivery';
+  const isTopAvulsoFlow = !isAppending && !isEditing && !isMesaFlow && !isForcedPickup && !isForcedDelivery;
 
   const productsMap = useMemo(() => {
     const map = new Map<string, Product>();
@@ -207,6 +224,7 @@ export function NewOrderModal({
     setSearch('');
     setShowSummary(false);
     setMesaDropdownAberto(false);
+    setDeliveryData(emptyDeliveryData);
     setFieldErrors({});
 
     if (mesaId) {
@@ -318,6 +336,7 @@ export function NewOrderModal({
           productName: p.name,
           quantity,
           unitPrice: Number(p.price || 0),
+          setor_impressao: p.setor_impressao?.trim().toLowerCase() || 'todos',
           additions,
         };
       })
@@ -334,6 +353,14 @@ export function NewOrderModal({
       return sum + baseTotal + additionsTotal;
     }, 0);
   }, [cartItems]);
+
+  const deliveryFee = Number(String(deliveryData.taxaEntrega || '0').replace(',', '.')) || 0;
+  const totalComEntrega = total + (orderType === 'Delivery' ? deliveryFee : 0);
+  const deliveryWhatsappDigits = deliveryData.whatsapp.replace(/\D/g, '');
+
+  const updateDeliveryField = (field: keyof typeof emptyDeliveryData, value: string) => {
+    setDeliveryData((prev) => ({ ...prev, [field]: value }));
+  };
 
   const updateQty = (productId: string | number, delta: number) => {
     const safeId = String(productId);
@@ -401,8 +428,8 @@ export function NewOrderModal({
       return;
     }
 
-    if (isForcedPickup && !customerName.trim()) {
-      toast.error('Informe o nome do cliente para retirada.');
+    if ((isForcedPickup || isForcedDelivery || orderType === 'Delivery') && !customerName.trim()) {
+      toast.error('Informe o nome do cliente.');
       return;
     }
 
@@ -425,14 +452,62 @@ export function NewOrderModal({
       return;
     }
 
+    if (resolvedOrderType === 'Delivery') {
+      if (!customerName.trim()) {
+        toast.error('Informe o nome do cliente do delivery.');
+        return;
+      }
+
+      if (!/^\d{10,11}$/.test(deliveryWhatsappDigits)) {
+        toast.error('Informe um WhatsApp válido com DDD, somente números.');
+        return;
+      }
+
+      if (!deliveryData.rua.trim() || !deliveryData.numero.trim() || !deliveryData.bairro.trim()) {
+        toast.error('Informe rua, número e bairro para entrega.');
+        return;
+      }
+
+      if (deliveryData.statusPagamento === 'a_cobrar' && !deliveryData.formaPagamento) {
+        toast.error('Selecione a forma de pagamento do delivery.');
+        return;
+      }
+
+      const trocoPara = deliveryData.trocoPara ? Number(String(deliveryData.trocoPara).replace(',', '.')) : 0;
+      if (
+        deliveryData.statusPagamento === 'a_cobrar' &&
+        deliveryData.formaPagamento === 'dinheiro' &&
+        trocoPara > 0 &&
+        trocoPara < totalComEntrega
+      ) {
+        toast.error('O valor de troco não pode ser menor que o total do delivery.');
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
       const safeCustomerName =
         customerName.trim() ||
-        (isForcedPickup ? 'Retirada' : selectedMesa ? `Mesa ${selectedMesa.numero}` : mesaNumero ? `Mesa ${mesaNumero}` : 'Pedido');
+        (isForcedPickup ? 'Retirada' : isForcedDelivery ? 'Delivery' : selectedMesa ? `Mesa ${selectedMesa.numero}` : mesaNumero ? `Mesa ${mesaNumero}` : 'Pedido');
 
       const finalNotes = `[${resolvedOrderType.toUpperCase()}] ${notes}`.trim();
+      const deliveryMeta = resolvedOrderType === 'Delivery'
+        ? {
+            whatsapp: deliveryWhatsappDigits,
+            endereco: {
+              rua: deliveryData.rua.trim(),
+              numero: deliveryData.numero.trim(),
+              bairro: deliveryData.bairro.trim(),
+              complemento: deliveryData.complemento.trim(),
+              referencia: deliveryData.referencia.trim(),
+            },
+            tempoEstimado: deliveryData.tempoEstimado.trim(),
+            formaPagamento: deliveryData.statusPagamento === 'a_cobrar' ? deliveryData.formaPagamento : '',
+            trocoPara: deliveryData.trocoPara ? Number(String(deliveryData.trocoPara).replace(',', '.')) : null,
+          }
+        : null;
 
       if (appendOrderId) {
         await appendItemsToOrder(appendOrderId, cartItems, finalNotes);
@@ -444,48 +519,125 @@ export function NewOrderModal({
           cartItems,
           finalNotes,
           user?.name || user?.username || 'Operador',
-          selectedMesa?.id ?? mesaId ?? null
+          selectedMesa?.id ?? mesaId ?? null,
+          resolvedOrderType === 'Delivery'
+            ? {
+                tipoPedido: 'delivery',
+                taxaEntrega: deliveryFee,
+                statusPagamento: deliveryData.statusPagamento,
+                statusEntrega: 'pendente',
+                metadataDelivery: deliveryMeta,
+                paid: deliveryData.statusPagamento === 'pago',
+                paymentMethod: deliveryData.statusPagamento === 'a_cobrar' ? deliveryData.formaPagamento : null,
+                amountReceived: deliveryData.statusPagamento === 'pago' ? totalComEntrega : null,
+                changeGiven: 0,
+              }
+            : { tipoPedido: resolvedOrderType === 'Retirada' ? 'retirada' : 'local' }
         );
       }
 // =====================================================================
       // 🖨️ DISPARO PARA A IMPRESSORA DA COZINHA (Tabela print_jobs)
       // =====================================================================
       try {
-        let nomeAlvo = customerName.trim();
+        let nomeAlvo = resolvedOrderType === 'Delivery'
+          ? `*** DELIVERY *** - ${safeCustomerName}`
+          : customerName.trim();
         if (selectedMesa) {
           nomeAlvo = `Mesa ${selectedMesa}`;
         } else if (isMesaFlow) {
           nomeAlvo = `Mesa`; 
         }
 
-        const itensCozinha = cartItems.map((item: any) => ({
-          nome: item.productName || item.name,
-          quantidade: item.quantity,
-          adicionais: (item.additions || []).map((add: any) => ({
-             nome: add.productName || add.name,
-             quantidade: add.quantity
-          }))
-        }));
+        const itensPorSetor = cartItems.reduce<Record<string, OrderItem[]>>((acc, item) => {
+          const setor = item.setor_impressao?.trim().toLowerCase() || 'todos';
 
-        const obsGeral = cartItems
-          .map((item: any) => item.observation)
-          .filter((obs: string) => obs && obs.trim() !== '')
-          .join(' | ');
+          if (!acc[setor]) acc[setor] = [];
+          acc[setor].push(item);
 
-        const { error: printError } = await supabase.from('print_jobs').insert({
-          loja_id: lojaAtualId,
-          tipo_impressao: 'pedido_cozinha',
-          conteudo: {
-            numeroPedido: appendOrderId ? `ADC-${appendOrderId}` : "NOVO",
-            clienteOuMesa: nomeAlvo,
-            itens: itensCozinha,
-            observacao: obsGeral
+          return acc;
+        }, {});
+
+        for (const [setor, itensDoSetor] of Object.entries(itensPorSetor)) {
+          const itensImpressao = itensDoSetor.map((item: any) => ({
+            nome: item.productName || item.name,
+            quantidade: item.quantity,
+            adicionais: (item.additions || []).map((add: any) => ({
+              nome: add.productName || add.name,
+              quantidade: add.quantity
+            }))
+          }));
+
+          const obsSetor = itensDoSetor
+            .map((item: any) => item.observation)
+            .filter((obs: string) => obs && obs.trim() !== '')
+            .join(' | ');
+
+          const { error: printError } = await supabase.from('print_jobs').insert({
+            loja_id: lojaAtualId,
+            tipo_impressao: 'pedido_cozinha',
+            status: 'pendente',
+            conteudo: {
+              setor,
+              numeroPedido: appendOrderId ? `ADC-${appendOrderId}` : "NOVO",
+              clienteOuMesa: nomeAlvo,
+              itens: itensImpressao,
+              observacao: obsSetor
+            }
+          });
+
+          if (printError) {
+            console.error(`Erro impressora (${setor}):`, printError);
+            toast.error(`Pedido salvo, mas a impressão do setor ${setor} falhou.`);
           }
-        });
+        }
 
-        if (printError) console.error('Erro impressora:', printError);
+        if (resolvedOrderType === 'Delivery' && deliveryMeta) {
+          const endereco = deliveryMeta.endereco;
+          const enderecoFormatado = [
+            `${endereco.rua}, ${endereco.numero}`,
+            endereco.bairro,
+            endereco.complemento ? `Compl: ${endereco.complemento}` : '',
+            endereco.referencia ? `Ref: ${endereco.referencia}` : '',
+          ].filter(Boolean).join(' - ');
+          const valorCobrar = totalComEntrega;
+          const financeiro = deliveryData.statusPagamento === 'pago'
+            ? 'PAGO'
+            : `COBRAR ${formatMoney(valorCobrar)}${deliveryMeta.trocoPara ? ` - Troco para ${formatMoney(deliveryMeta.trocoPara)}` : ''}`;
+
+          const { error: motoboyError } = await supabase.from('print_jobs').insert({
+            loja_id: lojaAtualId,
+            tipo_impressao: 'via_motoboy',
+            status: 'pendente',
+            conteudo: {
+              setor: 'caixa',
+              numeroPedido: appendOrderId ? `ADC-${appendOrderId}` : 'NOVO',
+              clienteOuMesa: `*** DELIVERY *** - ${safeCustomerName}`,
+              telefone: deliveryMeta.whatsapp,
+              endereco: enderecoFormatado,
+              tempoEstimado: deliveryMeta.tempoEstimado,
+              financeiro,
+              taxaEntrega: deliveryFee,
+              totalGeral: totalComEntrega,
+              itens: cartItems.map((item: any) => ({
+                nome: item.productName || item.name,
+                quantidade: item.quantity,
+                adicionais: (item.additions || []).map((add: any) => ({
+                  nome: add.productName || add.name,
+                  quantidade: add.quantity
+                }))
+              })),
+              observacao: notes,
+            }
+          });
+
+          if (motoboyError) {
+            console.error('Erro impressora via motoboy:', motoboyError);
+            toast.error('Pedido salvo, mas a via do motoboy falhou.');
+          }
+        }
       } catch (err) {
         console.error('Erro no bloco de impressao:', err);
+        toast.error('Pedido salvo, mas não foi possível enviar para impressão.');
       }
       // =====================================================================
       onClose();
@@ -513,6 +665,8 @@ export function NewOrderModal({
         ? `Abrir Mesa ${mesaNumero}`
         : isForcedPickup
           ? 'Novo Pedido de Retirada'
+          : isForcedDelivery
+            ? 'Novo Delivery'
           : 'Montar Novo Pedido';
 
   return (
@@ -563,11 +717,11 @@ export function NewOrderModal({
                       <span className="font-black text-primary">{orderType || forceOrderType}</span>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-2 gap-3 sm:gap-4">
-                      {['Local', 'Retirada'].map((type) => (
+                    <div className="grid grid-cols-3 gap-3 sm:gap-4">
+                      {['Local', 'Retirada', 'Delivery'].map((type) => (
                         <button
                           key={type}
-                          onClick={() => setOrderType(type as 'Local' | 'Retirada')}
+                          onClick={() => setOrderType(type as 'Local' | 'Retirada' | 'Delivery')}
                           disabled={isTopAvulsoFlow}
                           className={`py-4 rounded-2xl border-2 font-bold transition-all duration-300 ${
                             orderType === type
@@ -607,6 +761,24 @@ export function NewOrderModal({
                     <p className="text-[15px] font-medium italic text-foreground bg-muted/50 p-4 rounded-xl border-l-4 border-primary">
                       {notes}
                     </p>
+                  </div>
+                )}
+
+                {orderType === 'Delivery' && (
+                  <div className="mt-4 grid grid-cols-1 gap-3 rounded-2xl border border-primary/20 bg-primary/5 p-4 text-sm">
+                    <p className="font-black text-primary flex items-center gap-2">
+                      <Truck className="w-4 h-4" /> Delivery
+                    </p>
+                    <p><span className="font-bold">WhatsApp:</span> {deliveryData.whatsapp}</p>
+                    <p>
+                      <span className="font-bold">Endereço:</span>{' '}
+                      {[`${deliveryData.rua}, ${deliveryData.numero}`, deliveryData.bairro, deliveryData.complemento, deliveryData.referencia ? `Ref: ${deliveryData.referencia}` : ''].filter(Boolean).join(' - ')}
+                    </p>
+                    <p>
+                      <span className="font-bold">Pagamento:</span>{' '}
+                      {deliveryData.statusPagamento === 'pago' ? 'JÁ PAGO' : `A COBRAR - ${deliveryData.formaPagamento.toUpperCase()}`}
+                    </p>
+                    {deliveryData.tempoEstimado && <p><span className="font-bold">Tempo:</span> {deliveryData.tempoEstimado}</p>}
                   </div>
                 )}
               </div>
@@ -850,6 +1022,55 @@ export function NewOrderModal({
                     </div>
                   </div>
 
+                  {orderType === 'Delivery' && (
+                    <div className="mb-8 bg-card p-5 sm:p-6 rounded-3xl border border-border/60 shadow-sm">
+                      <h3 className="mb-5 flex items-center gap-2 text-sm font-black uppercase tracking-wider text-primary">
+                        <Truck className="h-4 w-4" /> Dados do Delivery
+                      </h3>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <input value={deliveryData.whatsapp} onChange={(e) => updateDeliveryField('whatsapp', e.target.value.replace(/\D/g, ''))} inputMode="numeric" maxLength={11} placeholder="WhatsApp com DDD" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                        <input value={deliveryData.tempoEstimado} onChange={(e) => updateDeliveryField('tempoEstimado', e.target.value)} placeholder="Tempo estimado (ex: 40 min)" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                        <input value={deliveryData.rua} onChange={(e) => updateDeliveryField('rua', e.target.value)} placeholder="Rua" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                        <input value={deliveryData.numero} onChange={(e) => updateDeliveryField('numero', e.target.value)} placeholder="Número" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                        <input value={deliveryData.bairro} onChange={(e) => updateDeliveryField('bairro', e.target.value)} placeholder="Bairro" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                        <input value={deliveryData.complemento} onChange={(e) => updateDeliveryField('complemento', e.target.value)} placeholder="Complemento" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                        <input value={deliveryData.referencia} onChange={(e) => updateDeliveryField('referencia', e.target.value)} placeholder="Ponto de referência" className="md:col-span-2 bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                        <input value={deliveryData.taxaEntrega} onChange={(e) => updateDeliveryField('taxaEntrega', e.target.value)} type="number" min="0" step="0.01" placeholder="Taxa de entrega (R$)" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+
+                        <div className="flex rounded-2xl border border-border/60 bg-background p-1">
+                          {[
+                            ['pago', 'JÁ PAGO'],
+                            ['a_cobrar', 'A COBRAR'],
+                          ].map(([value, label]) => (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={() => updateDeliveryField('statusPagamento', value)}
+                              className={`flex-1 rounded-xl px-3 py-3 text-xs font-black transition-all ${deliveryData.statusPagamento === value ? 'bg-primary text-black' : 'text-muted-foreground hover:bg-muted'}`}
+                            >
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+
+                        {deliveryData.statusPagamento === 'a_cobrar' && (
+                          <>
+                            <select value={deliveryData.formaPagamento} onChange={(e) => updateDeliveryField('formaPagamento', e.target.value)} className="bg-white text-black border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium">
+                              <option value="dinheiro">Dinheiro</option>
+                              <option value="credito">Cartão de Crédito</option>
+                              <option value="debito">Cartão de Débito</option>
+                              <option value="pix">Pix</option>
+                            </select>
+                            {deliveryData.formaPagamento === 'dinheiro' && (
+                              <input value={deliveryData.trocoPara} onChange={(e) => updateDeliveryField('trocoPara', e.target.value)} type="number" min="0" step="0.01" placeholder="Troco para quanto?" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-8">
                     {groupedProducts.map(([categoryName, prods]) => (
                       <div key={categoryName} className="space-y-4">
@@ -962,7 +1183,7 @@ export function NewOrderModal({
                   nextErrors.mesa = true;
                 }
 
-                if (isForcedPickup && !customerName.trim()) {
+                if ((isForcedPickup || isForcedDelivery || orderType === 'Delivery') && !customerName.trim()) {
                   nextErrors.customerName = true;
                 }
 
@@ -974,7 +1195,7 @@ export function NewOrderModal({
                   setFieldErrors(nextErrors);
 
                   if (nextErrors.customerName) {
-                    toast.error('Informe o nome do cliente para retirada.');
+                    toast.error(orderType === 'Delivery' ? 'Informe o nome do cliente do delivery.' : 'Informe o nome do cliente para retirada.');
                     return;
                   }
 
@@ -989,6 +1210,28 @@ export function NewOrderModal({
                   }
                 }
 
+                if (orderType === 'Delivery' && !/^\d{10,11}$/.test(deliveryWhatsappDigits)) {
+                  toast.error('Informe um WhatsApp válido com DDD, somente números.');
+                  return;
+                }
+
+                if (orderType === 'Delivery' && (!deliveryData.rua.trim() || !deliveryData.numero.trim() || !deliveryData.bairro.trim())) {
+                  toast.error('Preencha rua, número e bairro do delivery.');
+                  return;
+                }
+
+                const trocoPara = deliveryData.trocoPara ? Number(String(deliveryData.trocoPara).replace(',', '.')) : 0;
+                if (
+                  orderType === 'Delivery' &&
+                  deliveryData.statusPagamento === 'a_cobrar' &&
+                  deliveryData.formaPagamento === 'dinheiro' &&
+                  trocoPara > 0 &&
+                  trocoPara < totalComEntrega
+                ) {
+                  toast.error('O valor de troco não pode ser menor que o total do delivery.');
+                  return;
+                }
+
                 setFieldErrors({});
                 setShowSummary(true);
               }}
@@ -998,7 +1241,7 @@ export function NewOrderModal({
             >
               <span>Avançar para Revisão</span>
               <span className="bg-black/20 px-3 py-1.5 rounded-xl backdrop-blur-sm">
-                {formatMoney(total)}
+                {formatMoney(totalComEntrega)}
               </span>
             </button>
           ) : (
@@ -1016,7 +1259,7 @@ export function NewOrderModal({
                     : 'Confirmar e Enviar'}
               </span>
               <span className="bg-black/20 px-3 py-1.5 rounded-xl backdrop-blur-sm">
-                {formatMoney(total)}
+                {formatMoney(totalComEntrega)}
               </span>
             </button>
           )}

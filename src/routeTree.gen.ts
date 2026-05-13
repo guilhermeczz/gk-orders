@@ -13,6 +13,7 @@ import { Route as ReportsRouteImport } from './routes/reports'
 import { Route as ProductsRouteImport } from './routes/products'
 import { Route as PaidOrdersRouteImport } from './routes/paid-orders'
 import { Route as DeveloperRouteImport } from './routes/developer'
+import { Route as DeliveryRouteImport } from './routes/delivery'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as CashRegisterRouteImport } from './routes/cash-register'
 import { Route as IndexRouteImport } from './routes/index'
@@ -37,6 +38,11 @@ const DeveloperRoute = DeveloperRouteImport.update({
   path: '/developer',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DeliveryRoute = DeliveryRouteImport.update({
+  id: '/delivery',
+  path: '/delivery',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardRoute = DashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -57,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/cash-register': typeof CashRegisterRoute
   '/dashboard': typeof DashboardRoute
+  '/delivery': typeof DeliveryRoute
   '/developer': typeof DeveloperRoute
   '/paid-orders': typeof PaidOrdersRoute
   '/products': typeof ProductsRoute
@@ -66,6 +73,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/cash-register': typeof CashRegisterRoute
   '/dashboard': typeof DashboardRoute
+  '/delivery': typeof DeliveryRoute
   '/developer': typeof DeveloperRoute
   '/paid-orders': typeof PaidOrdersRoute
   '/products': typeof ProductsRoute
@@ -76,6 +84,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/cash-register': typeof CashRegisterRoute
   '/dashboard': typeof DashboardRoute
+  '/delivery': typeof DeliveryRoute
   '/developer': typeof DeveloperRoute
   '/paid-orders': typeof PaidOrdersRoute
   '/products': typeof ProductsRoute
@@ -87,6 +96,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cash-register'
     | '/dashboard'
+    | '/delivery'
     | '/developer'
     | '/paid-orders'
     | '/products'
@@ -96,6 +106,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cash-register'
     | '/dashboard'
+    | '/delivery'
     | '/developer'
     | '/paid-orders'
     | '/products'
@@ -105,6 +116,7 @@ export interface FileRouteTypes {
     | '/'
     | '/cash-register'
     | '/dashboard'
+    | '/delivery'
     | '/developer'
     | '/paid-orders'
     | '/products'
@@ -115,6 +127,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   CashRegisterRoute: typeof CashRegisterRoute
   DashboardRoute: typeof DashboardRoute
+  DeliveryRoute: typeof DeliveryRoute
   DeveloperRoute: typeof DeveloperRoute
   PaidOrdersRoute: typeof PaidOrdersRoute
   ProductsRoute: typeof ProductsRoute
@@ -151,6 +164,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeveloperRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/delivery': {
+      id: '/delivery'
+      path: '/delivery'
+      fullPath: '/delivery'
+      preLoaderRoute: typeof DeliveryRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard': {
       id: '/dashboard'
       path: '/dashboard'
@@ -179,6 +199,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   CashRegisterRoute: CashRegisterRoute,
   DashboardRoute: DashboardRoute,
+  DeliveryRoute: DeliveryRoute,
   DeveloperRoute: DeveloperRoute,
   PaidOrdersRoute: PaidOrdersRoute,
   ProductsRoute: ProductsRoute,

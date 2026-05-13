@@ -14,6 +14,7 @@ import {
   Banknote,
   CreditCard,
   DollarSign,
+  X,
 } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { toast } from 'sonner';
@@ -115,6 +116,12 @@ export function ReportsPage() {
   const { fetchOrdersByPeriod, lojaAtualId } = useAppStore();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportTypes, setExportTypes] = useState({
+    delivery: true,
+    retirada: true,
+    local: true,
+  });
 
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -178,6 +185,14 @@ export function ReportsPage() {
   }, [paidOrders]);
 
   const ticketMedio = paidOrders.length > 0 ? totalRevenue / paidOrders.length : 0;
+  const deliveryOrders = useMemo(
+    () => paidOrders.filter((order) => order.tipoPedido === 'delivery'),
+    [paidOrders]
+  );
+  const deliveryRevenue = useMemo(
+    () => deliveryOrders.reduce((sum, order) => sum + Number(order.total || 0), 0),
+    [deliveryOrders]
+  );
 
   const paymentStats = useMemo(() => {
     const totals = { dinheiro: 0, pix: 0, credito: 0, debito: 0 };
@@ -215,10 +230,29 @@ export function ReportsPage() {
 
   const maxDailyRevenue = Math.max(...chartData.map((d) => d.total), 1);
 
+  const getOrderTypeLabel = (order: Order) => {
+    if (order.tipoPedido === 'delivery') return 'Delivery';
+    if (order.tipoPedido === 'retirada' || String(order.notes || '').includes('[RETIRADA]')) return 'Retirada';
+    return 'Local';
+  };
+
+  const getSelectedExportOrders = () => {
+    return paidOrders.filter((order) => {
+      const type = getOrderTypeLabel(order).toLowerCase() as keyof typeof exportTypes;
+      return exportTypes[type];
+    });
+  };
+
   const handleDownloadPDF = () => {
-    if (paidOrders.length === 0) {
+    const selectedOrders = getSelectedExportOrders();
+
+    if (selectedOrders.length === 0) {
       return toast.error('Não há vendas neste período para gerar PDF.');
     }
+
+    const selectedRevenue = selectedOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+    const selectedDeliveryOrders = selectedOrders.filter((order) => order.tipoPedido === 'delivery');
+    const selectedDeliveryRevenue = selectedDeliveryOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
 
     const doc = new jsPDF();
 
@@ -245,9 +279,11 @@ export function ReportsPage() {
       startY: 52,
       head: [['Resumo', 'Valor']],
       body: [
-        ['Faturamento Total', `R$ ${money(totalRevenue)}`],
-        ['Pedidos Pagos', String(paidOrders.length)],
-        ['Ticket Médio', `R$ ${money(ticketMedio)}`],
+        ['Faturamento Total', `R$ ${money(selectedRevenue)}`],
+        ['Pedidos Pagos', String(selectedOrders.length)],
+        ['Pedidos Delivery', String(selectedDeliveryOrders.length)],
+        ['Faturamento Delivery', `R$ ${money(selectedDeliveryRevenue)}`],
+        ['Ticket Médio', `R$ ${money(selectedOrders.length > 0 ? selectedRevenue / selectedOrders.length : 0)}`],
         ['Dinheiro', `R$ ${money(paymentStats.dinheiro)}`],
         ['PIX', `R$ ${money(paymentStats.pix)}`],
         ['Crédito', `R$ ${money(paymentStats.credito)}`],
@@ -262,13 +298,14 @@ export function ReportsPage() {
       styles: { fontSize: 10, cellPadding: 4 },
     });
 
-    const tableData = paidOrders.map((order: any) => [
+    const tableData = selectedOrders.map((order: any) => [
       `#${String(order.number).padStart(4, '0')}`,
       new Date(order.createdAt).toLocaleString('pt-BR', {
         dateStyle: 'short',
         timeStyle: 'short',
       }),
       order.customerName || 'Não informado',
+      getOrderTypeLabel(order),
       getPaymentMethodLabel(order.paymentMethod),
       String(order.paymentMethod || '').toLowerCase() === 'dinheiro'
         ? `R$ ${money(Number(order.amountReceived || 0))}`
@@ -281,7 +318,7 @@ export function ReportsPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 8,
-      head: [['Pedido', 'Data / Hora', 'Cliente', 'Pagamento', 'Recebido', 'Troco', 'Valor']],
+      head: [['Pedido', 'Data / Hora', 'Cliente', 'Tipo', 'Pagamento', 'Recebido', 'Troco', 'Valor']],
       body: tableData,
       theme: 'striped',
       headStyles: {
@@ -294,6 +331,7 @@ export function ReportsPage() {
     });
 
     doc.save(`Relatorio_gk_${startDate}_a_${endDate}.pdf`);
+    setExportModalOpen(false);
     toast.success('Download do PDF iniciado!');
   };
 
@@ -324,7 +362,7 @@ export function ReportsPage() {
             </div>
 
             <button
-              onClick={handleDownloadPDF}
+              onClick={() => setExportModalOpen(true)}
               disabled={loadingOrders || totalRevenue === 0}
               className="flex items-center gap-2 px-5 py-2.5 bg-background border border-border hover:border-primary hover:text-primary text-foreground rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
             >
@@ -547,6 +585,12 @@ export function ReportsPage() {
                           >
                             {statusInfo.label}
                           </span>
+
+                          {order.tipoPedido === 'delivery' && (
+                            <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full border border-blue-500/20 bg-blue-500/10 text-blue-500">
+                              Delivery
+                            </span>
+                          )}
                         </div>
 
                         <p className="text-sm text-muted-foreground">
@@ -599,6 +643,48 @@ export function ReportsPage() {
           )}
         </div>
       </div>
+
+      {exportModalOpen && (
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/80 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-lg font-black text-foreground">Exportar Relatório</h2>
+              <button type="button" onClick={() => setExportModalOpen(false)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 rounded-xl border border-border bg-background p-3 font-bold">
+                <input
+                  type="checkbox"
+                  checked={exportTypes.delivery && exportTypes.retirada && exportTypes.local}
+                  onChange={(e) => setExportTypes({ delivery: e.target.checked, retirada: e.target.checked, local: e.target.checked })}
+                />
+                Todos
+              </label>
+              {[
+                ['delivery', 'Delivery'],
+                ['retirada', 'Retirada'],
+                ['local', 'Local'],
+              ].map(([key, label]) => (
+                <label key={key} className="flex items-center gap-3 rounded-xl border border-border bg-background p-3 font-bold">
+                  <input
+                    type="checkbox"
+                    checked={exportTypes[key as keyof typeof exportTypes]}
+                    onChange={(e) => setExportTypes((prev) => ({ ...prev, [key]: e.target.checked }))}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+
+            <button type="button" onClick={handleDownloadPDF} className="mt-5 w-full rounded-xl bg-primary px-4 py-3 font-black text-black">
+              Gerar PDF
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }

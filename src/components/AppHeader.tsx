@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ShieldCheck,
   Store,
+  Bike,
 } from 'lucide-react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useAuth } from '@/lib/auth';
@@ -19,7 +20,7 @@ import { toast } from 'sonner';
 import logoFull from '@/assets/logo-full.png';
 
 type NavItem = {
-  to: '/dashboard' | '/paid-orders' | '/products' | '/reports' | '/cash-register' | '/developer';
+  to: '/dashboard' | '/delivery' | '/paid-orders' | '/products' | '/reports' | '/cash-register' | '/developer';
   label: string;
   icon: any;
   allowedRoles: string[]; // Controle de permissão
@@ -28,6 +29,7 @@ type NavItem = {
 // CORRIGIDO AQUI: Trocamos 'admin' por 'admin_loja' para bater com o banco de dados!
 const baseNavItems: NavItem[] = [
   { to: '/dashboard', label: 'Início', icon: Home, allowedRoles: ['admin_loja', 'operador', 'desenvolvedor'] },
+  { to: '/delivery', label: 'Delivery', icon: Bike, allowedRoles: ['admin_loja', 'operador', 'desenvolvedor'] },
   { to: '/paid-orders', label: 'Pedidos Pagos', icon: CheckCircle2, allowedRoles: ['admin_loja', 'desenvolvedor'] },
   { to: '/products', label: 'Produtos', icon: Package, allowedRoles: ['admin_loja', 'desenvolvedor'] },
   { to: '/reports', label: 'Relatórios', icon: BarChart3, allowedRoles: ['admin_loja', 'desenvolvedor'] },

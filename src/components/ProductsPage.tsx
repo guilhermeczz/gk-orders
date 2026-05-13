@@ -51,6 +51,7 @@ export function ProductsPage() {
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [categoryId, setCategoryId] = useState('');
+  const [setor_impressao, setSetorImpressao] = useState('todos');
   const [editProdId, setEditProdId] = useState<string | null>(null);
   const [loadingProd, setLoadingProd] = useState(false);
 
@@ -135,6 +136,13 @@ export function ProductsPage() {
     scrollContainerRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   };
 
+  const printSetores = [
+    { value: 'todos', label: 'Todos' },
+    { value: 'cozinha', label: 'Cozinha' },
+    { value: 'bar', label: 'Bar' },
+    { value: 'caixa', label: 'Caixa' },
+  ];
+
   const ensureAdditionsCategory = async () => {
     if (additionsCategory) return String(additionsCategory.id);
     if (!lojaAtualId) throw new Error('Loja não identificada.');
@@ -180,6 +188,7 @@ export function ProductsPage() {
     try {
       const resolvedCategoryId =
         activeTab === 'additions' ? await ensureAdditionsCategory() : targetCategoryId;
+      const resolvedSetorImpressao = setor_impressao.trim() || 'todos';
 
       if (editProdId) {
         await updateProduct({
@@ -187,12 +196,14 @@ export function ProductsPage() {
           name: name.trim(),
           price: numericPrice,
           categoryId: resolvedCategoryId,
+          setor_impressao: resolvedSetorImpressao,
         });
       } else {
         const success = await addProduct({
           name: name.trim(),
           price: numericPrice,
           categoryId: resolvedCategoryId,
+          setor_impressao: resolvedSetorImpressao,
         });
 
         if (!success) {
@@ -203,6 +214,7 @@ export function ProductsPage() {
 
       setName('');
       setPrice('');
+      setSetorImpressao('todos');
       setEditProdId(null);
       setShowProdForm(false);
       setProdErrors({});
@@ -218,6 +230,7 @@ export function ProductsPage() {
     setName(p.name);
     setPrice(p.price.toString());
     setCategoryId(p.categoryId);
+    setSetorImpressao(p.setor_impressao || 'todos');
     setEditProdId(p.id);
     setShowProdForm(true);
   };
@@ -225,6 +238,7 @@ export function ProductsPage() {
   const cancelEditProduct = () => {
     setName('');
     setPrice('');
+    setSetorImpressao('todos');
     setEditProdId(null);
     setShowProdForm(false);
     setProdErrors({});
@@ -417,7 +431,7 @@ export function ProductsPage() {
                     <button onClick={cancelEditProduct} className="p-2 text-gray-400 hover:text-destructive hover:bg-destructive/20 rounded-lg transition-all"><X className="w-6 h-6"/></button>
                   </div>
 
-                  <div className={`grid grid-cols-1 ${activeTab === 'additions' ? 'md:grid-cols-2' : 'md:grid-cols-2'} gap-5 mb-5`}>
+                  <div className={`grid grid-cols-1 ${activeTab === 'additions' ? 'md:grid-cols-3' : 'md:grid-cols-3'} gap-5 mb-5`}>
                     <div>
                       <label className="text-sm font-bold text-gray-300 mb-2 block">
                         {activeTab === 'additions' ? 'Nome do Adicional' : 'Nome do Produto'}
@@ -447,6 +461,23 @@ export function ProductsPage() {
                         placeholder="0.00"
                         className={`${inputClass} ${prodErrors.price ? inputErrorClass : Number(String(price).replace(',', '.')) > 0 ? inputSuccessClass : ''}`}
                       />
+                    </div>
+                    <div>
+                      <label className="text-sm font-bold text-gray-300 mb-2 block">Setor de Impressão</label>
+                      <select
+                        value={setor_impressao}
+                        onChange={(e) => setSetorImpressao(e.target.value)}
+                        className={inputClass}
+                      >
+                        {printSetores.map((setor) => (
+                          <option key={setor.value} value={setor.value}>
+                            {setor.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="mt-2 text-xs font-medium text-gray-500">
+                        Use Todos quando uma única impressora deve receber o pedido completo.
+                      </p>
                     </div>
                   </div>
 
@@ -497,6 +528,11 @@ export function ProductsPage() {
                         <span className={`text-xs font-bold px-2 py-1 rounded-md ${activeTab === 'additions' ? 'bg-amber-500/10 text-amber-500' : 'bg-muted text-muted-foreground'}`}>
                           {activeTab === 'additions' ? '➕ Adicional' : getCategoryLabel(p.categoryId)}
                         </span>
+                        {p.setor_impressao && (
+                          <span className="text-xs font-bold px-2 py-1 rounded-md bg-blue-500/10 text-blue-500">
+                            {p.setor_impressao}
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-4">

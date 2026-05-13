@@ -11,6 +11,7 @@ import {
   CalendarDays,
   Receipt,
   Download,
+  X,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
@@ -82,6 +83,12 @@ export function PaidOrdersPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [paidOrders, setPaidOrders] = useState<Order[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportTypes, setExportTypes] = useState({
+    delivery: true,
+    retirada: true,
+    local: true,
+  });
 
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -154,12 +161,14 @@ export function PaidOrdersPage() {
       const number = String(order.number || '');
       const customer = normalizeText(String(order.customerName || ''));
       const method = normalizeText(getPaymentMethodLabel(order.paymentMethod));
+      const tipo = normalizeText(order.tipoPedido === 'delivery' ? 'delivery' : '');
       const total = String(Number(order.total || 0).toFixed(2));
 
       return (
         number.includes(q) ||
         customer.includes(q) ||
         method.includes(q) ||
+        tipo.includes(q) ||
         total.includes(q)
       );
     });
@@ -176,7 +185,7 @@ export function PaidOrdersPage() {
     const todayStr = new Date().toDateString(); // Fica fora do loop (O(1))
 
     return liveOrders
-      .filter((order) => new Date(order.paidAt || order.createdAt).toDateString() === todayStr)
+      .filter((order) => (order.status === 'paid' || order.paid) && new Date(order.paidAt || order.createdAt).toDateString() === todayStr)
       .reduce((sum, order) => sum + Number(order.total || 0), 0);
   }, [liveOrders]);
 
@@ -203,11 +212,28 @@ export function PaidOrdersPage() {
     return totals;
   }, [filteredPaidOrders]);
 
+  const getOrderTypeLabel = (order: Order) => {
+    if (order.tipoPedido === 'delivery') return 'Delivery';
+    if (order.tipoPedido === 'retirada' || String(order.notes || '').includes('[RETIRADA]')) return 'Retirada';
+    return 'Local';
+  };
+
+  const getSelectedExportOrders = () => {
+    return filteredPaidOrders.filter((order) => {
+      const type = getOrderTypeLabel(order).toLowerCase() as keyof typeof exportTypes;
+      return exportTypes[type];
+    });
+  };
+
   const handleDownloadPDF = () => {
-    if (filteredPaidOrders.length === 0) {
+    const selectedOrders = getSelectedExportOrders();
+
+    if (selectedOrders.length === 0) {
       toast.error('Não há pedidos pagos neste filtro para gerar PDF.');
       return;
     }
+
+    const selectedTotal = selectedOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
 
     const doc = new jsPDF();
 
@@ -238,8 +264,8 @@ export function PaidOrdersPage() {
       startY: searchTerm.trim() ? 57 : 52,
       head: [['Resumo', 'Valor']],
       body: [
-        ['Total de pedidos pagos', String(filteredPaidOrders.length)],
-        ['Total faturado', `R$ ${money(totalPaid)}`],
+        ['Total de pedidos pagos', String(selectedOrders.length)],
+        ['Total faturado', `R$ ${money(selectedTotal)}`],
         ['Dinheiro', `R$ ${money(paymentStats.dinheiro)}`],
         ['PIX', `R$ ${money(paymentStats.pix)}`],
         ['Crédito', `R$ ${money(paymentStats.credito)}`],
@@ -255,13 +281,14 @@ export function PaidOrdersPage() {
       styles: { fontSize: 10, cellPadding: 4 },
     });
 
-    const tableData = filteredPaidOrders.map((order) => [
+    const tableData = selectedOrders.map((order) => [
       `#${String(order.number || 0).padStart(4, '0')}`,
       new Date(order.paidAt || order.createdAt).toLocaleString('pt-BR', {
         dateStyle: 'short',
         timeStyle: 'short',
       }),
       order.customerName || 'Pedido',
+      getOrderTypeLabel(order),
       getPaymentMethodLabel(order.paymentMethod),
       String(order.paymentMethod || '').toLowerCase() === 'dinheiro'
         ? `R$ ${money(Number(order.amountReceived || 0))}`
@@ -274,7 +301,7 @@ export function PaidOrdersPage() {
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 8,
-      head: [['Pedido', 'Data / Hora', 'Cliente', 'Pagamento', 'Recebido', 'Troco', 'Total']],
+      head: [['Pedido', 'Data / Hora', 'Cliente', 'Tipo', 'Pagamento', 'Recebido', 'Troco', 'Total']],
       body: tableData,
       theme: 'striped',
       headStyles: {
@@ -287,6 +314,7 @@ export function PaidOrdersPage() {
     });
 
     doc.save(`Pedidos_Pagos_Gk_${startDate}_a_${endDate}.pdf`);
+    setExportModalOpen(false);
     toast.success('PDF de pedidos pagos gerado!');
   };
 
@@ -322,7 +350,7 @@ export function PaidOrdersPage() {
             </div>
 
             <button
-              onClick={handleDownloadPDF}
+              onClick={() => setExportModalOpen(true)}
               disabled={loadingOrders || filteredPaidOrders.length === 0}
               className="flex items-center justify-center gap-2 px-5 py-3 bg-background border border-border hover:border-primary hover:text-primary text-foreground rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
             >
@@ -437,6 +465,12 @@ export function PaidOrdersPage() {
                       <span className="text-[10px] font-black px-2 py-1 rounded-full uppercase tracking-wider bg-green-500/15 text-green-400 border border-green-500/30">
                         Pago
                       </span>
+
+                      {order.tipoPedido === 'delivery' && (
+                        <span className="text-[10px] font-black px-2 py-1 rounded-full uppercase tracking-wider bg-blue-500/15 text-blue-400 border border-blue-500/30">
+                          Delivery
+                        </span>
+                      )}
                     </div>
 
                     <p className="text-xs text-muted-foreground mb-3">
@@ -486,6 +520,48 @@ export function PaidOrdersPage() {
           </div>
         </div>
       </div>
+
+      {exportModalOpen && (
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/80 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-lg font-black text-foreground">Exportar Pedidos Pagos</h2>
+              <button type="button" onClick={() => setExportModalOpen(false)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="flex items-center gap-3 rounded-xl border border-border bg-background p-3 font-bold">
+                <input
+                  type="checkbox"
+                  checked={exportTypes.delivery && exportTypes.retirada && exportTypes.local}
+                  onChange={(e) => setExportTypes({ delivery: e.target.checked, retirada: e.target.checked, local: e.target.checked })}
+                />
+                Todos
+              </label>
+              {[
+                ['delivery', 'Delivery'],
+                ['retirada', 'Retirada'],
+                ['local', 'Local'],
+              ].map(([key, label]) => (
+                <label key={key} className="flex items-center gap-3 rounded-xl border border-border bg-background p-3 font-bold">
+                  <input
+                    type="checkbox"
+                    checked={exportTypes[key as keyof typeof exportTypes]}
+                    onChange={(e) => setExportTypes((prev) => ({ ...prev, [key]: e.target.checked }))}
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+
+            <button type="button" onClick={handleDownloadPDF} className="mt-5 w-full rounded-xl bg-primary px-4 py-3 font-black text-black">
+              Gerar PDF
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }

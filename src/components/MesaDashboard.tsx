@@ -1696,6 +1696,7 @@ function MesaDetailsModal({
       }));
 
       const conteudo = {
+        setor: 'caixa',
         clienteOuMesa: clienteOuMesaStr,
         itens: itensFormatados,
         totalGeral: totalGeral

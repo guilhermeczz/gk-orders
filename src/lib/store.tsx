@@ -16,6 +16,10 @@ import type {
   PaymentMethod,
   OrderBatch,
   Mesa,
+  OrderType,
+  DeliveryStatus,
+  DeliveryPaymentStatus,
+  DeliveryMetadata,
 } from './types';
 import { supabase } from './supabase';
 import {
@@ -27,6 +31,18 @@ import { toast } from 'sonner';
 interface CashPaymentMeta {
   amountReceived?: number;
   changeGiven?: number;
+}
+
+interface OrderExtraData {
+  tipoPedido?: OrderType;
+  taxaEntrega?: number;
+  statusPagamento?: DeliveryPaymentStatus;
+  statusEntrega?: DeliveryStatus;
+  metadataDelivery?: DeliveryMetadata | null;
+  paid?: boolean;
+  paymentMethod?: PaymentMethod | null;
+  amountReceived?: number | null;
+  changeGiven?: number | null;
 }
 
 const normalizeAdditionsForDb = (additions?: OrderItem['additions']) => {
@@ -98,7 +114,8 @@ interface AppState {
     items: OrderItem[],
     notes?: string,
     createdBy?: string,
-    mesaId?: string | null
+    mesaId?: string | null,
+    extraData?: OrderExtraData
   ) => Promise<void>;
 
   updateOrder: (
@@ -167,6 +184,13 @@ interface AppState {
 
 const AppContext = createContext<AppState | null>(null);
 const ORDER_WITH_ITEMS_SELECT = '*, pedido_itens(*)';
+
+const PRINT_SETORES = new Set(['bar', 'cozinha', 'caixa', 'todos']);
+
+const normalizeSetorImpressao = (setor?: string | null) => {
+  const normalizedSetor = String(setor || '').trim().toLowerCase();
+  return PRINT_SETORES.has(normalizedSetor) ? normalizedSetor : 'todos';
+};
 
 function mapOrderFromDb(o: any): Order {
   const itemRows = Array.isArray(o.pedido_itens) ? o.pedido_itens : [];
@@ -257,6 +281,11 @@ function mapOrderFromDb(o: any): Order {
       (a, b) =>
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
     ),
+    tipoPedido: (o.tipo_pedido || undefined) as OrderType | undefined,
+    taxaEntrega: Number(o.taxa_entrega || 0),
+    statusPagamento: (o.status_pagamento || undefined) as DeliveryPaymentStatus | undefined,
+    statusEntrega: (o.status_entrega || undefined) as DeliveryStatus | undefined,
+    metadataDelivery: (o.metadata_delivery ?? null) as DeliveryMetadata | null,
     loja_id: o.loja_id ? String(o.loja_id) : undefined,
   };
 }
@@ -372,6 +401,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             name: p.nome,
             price: Number(p.preco),
             categoryId: String(p.categoria_id),
+            setor_impressao: normalizeSetorImpressao(p.setor_impressao),
             active: p.ativo ?? true,
           }))
         );
@@ -525,9 +555,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // =========================================================================
 
   const addOrder = useCallback(
-    async (customerName: string, items: OrderItem[], notes: string = '', createdBy?: string, mesaId?: string | null) => {
+    async (
+      customerName: string,
+      items: OrderItem[],
+      notes: string = '',
+      createdBy?: string,
+      mesaId?: string | null,
+      extraData?: OrderExtraData
+    ) => {
       if (!lojaAtualId) return;
-      const total = getItemsTotal(items);
+      const total = getItemsTotal(items) + Number(extraData?.taxaEntrega || 0);
       const safeCreatedBy = String(createdBy || '').trim() || 'Operador';
 
       const { data: order, error } = await supabase
@@ -537,10 +574,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
             loja_id: lojaAtualId,
             cliente_nome: customerName,
             valor_total: total,
-            status: 'new',
+            status: extraData?.paid ? 'paid' : 'new',
+            pago: extraData?.paid ?? false,
+            forma_pagamento: extraData?.paymentMethod ?? null,
+            paid_at: extraData?.paid ? new Date().toISOString() : null,
+            amount_received: extraData?.amountReceived ?? null,
+            change_given: extraData?.changeGiven ?? null,
             observacao: notes,
             created_by: safeCreatedBy,
             mesa_id: mesaId ?? null,
+            tipo_pedido: extraData?.tipoPedido ?? (mesaId ? 'local' : 'retirada'),
+            taxa_entrega: Number(extraData?.taxaEntrega || 0),
+            status_pagamento: extraData?.statusPagamento ?? null,
+            status_entrega: extraData?.statusEntrega ?? null,
+            metadata_delivery: extraData?.metadataDelivery ?? null,
           },
         ])
         .select()
@@ -1073,6 +1120,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           nome: product.name,
           preco: product.price,
           categoria_id: product.categoryId,
+          setor_impressao: normalizeSetorImpressao(product.setor_impressao),
           ativo: product.active ?? true,
         },
       ]);
@@ -1097,6 +1145,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
           nome: product.name,
           preco: product.price,
           categoria_id: product.categoryId,
+          setor_impressao: normalizeSetorImpressao(product.setor_impressao),
           ativo: product.active ?? true,
         })
         .eq('loja_id', lojaAtualId)
