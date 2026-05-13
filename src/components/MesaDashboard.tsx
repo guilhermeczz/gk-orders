@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Search, Plus, X, Printer, CreditCard, Trash2, Pencil, Receipt, Users, ChevronRight, LayoutGrid, Banknote, AlertTriangle, UtensilsCrossed } from 'lucide-react';
+import { Search, Plus, X, Printer, CreditCard, Trash2, Pencil, Receipt, Users, LayoutGrid, Banknote, AlertTriangle, UtensilsCrossed } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -89,13 +89,11 @@ export function MesaDashboard() {
     lojaAtualId,
   } = useAppStore();
 
-  const { user } = useAuth();
-
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedMesa, setSelectedMesa] = useState<Mesa | null>(null);
   const [addItemsTarget, setAddItemsTarget] = useState<Order | null>(null);
   const [newOrderMesa, setNewOrderMesa] = useState<Mesa | null>(null);
-const [newOrderCustomerName, setNewOrderCustomerName] = useState<string>('');
+  const [, setNewOrderCustomerName] = useState<string>('');
   const [deleteMesaTarget, setDeleteMesaTarget] = useState<Mesa | null>(null);
 
   const [payTarget, setPayTarget] = useState<Order | null>(null);
@@ -188,17 +186,23 @@ const [newOrderCustomerName, setNewOrderCustomerName] = useState<string>('');
     const q = removerAcentos(searchTerm.trim().toLowerCase());
     if (!q) return mesasComResumo;
 
-    return mesasComResumo.filter(({ mesa, total }) => {
+    return mesasComResumo.filter(({ mesa, total, orders }) => {
       const numero = String(mesa.numero);
       const nome = removerAcentos(String(mesa.nome || '').toLowerCase());
       const garcom = removerAcentos(String(mesa.garcomNome || '').toLowerCase());
       const totalText = String(total.toFixed(2));
+      const comandas = orders.map((order) =>
+        removerAcentos(
+          String(order.customerName || `Mesa ${mesa.numero}`).toLowerCase()
+        )
+      );
 
       return (
         numero.includes(q) ||
         nome.includes(q) ||
         garcom.includes(q) ||
-        totalText.includes(q)
+        totalText.includes(q) ||
+        comandas.some((comanda) => comanda.includes(q))
       );
     });
   }, [mesasComResumo, searchTerm]);
@@ -314,21 +318,6 @@ const [newOrderCustomerName, setNewOrderCustomerName] = useState<string>('');
     setSelectedMesa(mesa);
   };
 
-  // NOVA LÓGICA: Pagamento pode ser da mesa toda ou de uma comanda específica
-  const handleFinalizePagamento = (ordersToPay: Order[], totalToPay: number, comandaNome?: string) => {
-    if (!ordersToPay.length) {
-      toast.error('Não há pedidos em aberto para pagar.');
-      return;
-    }
-
-    setMesaPaymentTarget({
-      mesa: selectedMesa!,
-      orders: ordersToPay,
-      total: totalToPay,
-      comandaNome,
-    });
-  };
-
   return (
     <>
       <div className="print:hidden mb-4">
@@ -348,7 +337,7 @@ const [newOrderCustomerName, setNewOrderCustomerName] = useState<string>('');
               <input
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Busque por uma Mesa..."
+                placeholder="Busque uma mesa ou comanda"
                 className="w-full bg-white text-black placeholder:text-gray-400 border border-border rounded-xl pl-11 pr-4 py-3 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"
               />
             </div>
@@ -557,7 +546,7 @@ const [newOrderCustomerName, setNewOrderCustomerName] = useState<string>('');
           onClose={() => setSelectedMesa(null)}
           onNovaComanda={() => {
             setSelectedMesa(null);
-            setNewOrderCustomerName(''); // Garante que o campo virá em branco
+            setNewOrderCustomerName('');
             setNewOrderMesa(selectedMesa);
           }}
           onAddToComanda={(comandaNome: string) => {
@@ -1961,36 +1950,6 @@ function MesaDetailsModal({
         </div>
       )}
     </>
-  );
-}
-
-function InfoCard({
-  label,
-  value,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  highlight?: 'primary' | 'success' | 'warning';
-}) {
-  const highlightClass =
-    highlight === 'primary'
-      ? 'text-primary'
-      : highlight === 'success'
-        ? 'text-green-400'
-        : highlight === 'warning'
-          ? 'text-orange-400'
-          : 'text-white';
-
-  return (
-    <div className="rounded-2xl border border-gray-800 bg-gray-900/60 p-3 sm:p-4">
-      <p className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-gray-400">
-        {label}
-      </p>
-      <p className={`mt-1 sm:mt-2 text-lg sm:text-xl font-black ${highlightClass}`}>
-        {value}
-      </p>
-    </div>
   );
 }
 

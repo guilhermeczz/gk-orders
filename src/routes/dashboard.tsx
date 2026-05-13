@@ -17,31 +17,24 @@ const EMPTY_CART: Record<string, number> = {};
 
 function DashboardPage() {
   const { isAuthenticated, user } = useAuth();
-  
-  // ADICIONADO: lojaAtualId extraído para blindagem multi-loja
+
   const { products, mesas, lojaAtualId } = useAppStore();
 
   const [orderModalOpen, setOrderModalOpen] = useState(false);
   const [editOrder, setEditOrder] = useState<Order | null>(null);
 
-  // =========================================================================
-  // OTIMIZAÇÃO: Uso de Maps para busca instantânea O(1) de produtos
-  // =========================================================================
   const initialCart = useMemo(() => {
     if (!editOrder) return EMPTY_CART;
 
     const cart: Record<string, number> = {};
-    
-    // Cria mapas de busca rápida na memória
+
     const productById = new Map(products.map(p => [String(p.id), p]));
     const productByName = new Map(products.map(p => [p.name, p]));
 
     editOrder.items.forEach((item) => {
-      // Busca instantânea pelo ID
       if (item.productId && productById.has(String(item.productId))) {
         cart[String(item.productId)] = item.quantity;
       } else {
-        // Busca instantânea (fallback) pelo nome
         const fallback = productByName.get(item.productName);
         if (fallback) {
           cart[String(fallback.id)] = item.quantity;
@@ -52,13 +45,11 @@ function DashboardPage() {
     return cart;
   }, [editOrder, products]);
 
-  // Trava de segurança principal de rotas
   if (!isAuthenticated) {
     return <Navigate to="/" />;
   }
 
   const handleNewOrder = () => {
-    // BLINDAGEM: Impede abrir um pedido se o sistema não reconhecer a loja logada
     if (!lojaAtualId) {
       toast.error('Erro de sessão: Nenhuma loja vinculada.');
       return;
@@ -68,16 +59,10 @@ function DashboardPage() {
 
     if (!mesas || mesas.length === 0) {
       toast.error('Cadastre pelo menos uma mesa antes de abrir um pedido.');
-      // Permite abrir o modal mesmo assim, pois o usuário pode criar retirada
       setOrderModalOpen(true);
       return;
     }
 
-    setOrderModalOpen(true);
-  };
-
-  const handleEditOrder = (order: Order) => {
-    setEditOrder(order);
     setOrderModalOpen(true);
   };
 

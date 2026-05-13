@@ -1,4 +1,4 @@
-import React, {
+import {
   createContext,
   useContext,
   useState,
@@ -87,6 +87,11 @@ interface AppState {
   fetchUsers: () => Promise<void>;
   fetchMesas: () => Promise<void>;
   fetchData: () => Promise<void>;
+  fetchOrdersByPeriod: (
+    startDate: Date,
+    endDate: Date,
+    options?: { paidOnly?: boolean }
+  ) => Promise<Order[]>;
 
   addOrder: (
     customerName: string,
@@ -161,6 +166,100 @@ interface AppState {
 }
 
 const AppContext = createContext<AppState | null>(null);
+const ORDER_WITH_ITEMS_SELECT = '*, pedido_itens(*)';
+
+function mapOrderFromDb(o: any): Order {
+  const itemRows = Array.isArray(o.pedido_itens) ? o.pedido_itens : [];
+
+  const sortedItems = [...itemRows].sort((a: any, b: any) => {
+    const batchCompare = Number(a.batch_number || 1) - Number(b.batch_number || 1);
+
+    if (batchCompare !== 0) return batchCompare;
+
+    const aTime = a.batch_created_at
+      ? new Date(a.batch_created_at).getTime()
+      : a.created_at
+        ? new Date(a.created_at).getTime()
+        : 0;
+
+    const bTime = b.batch_created_at
+      ? new Date(b.batch_created_at).getTime()
+      : b.created_at
+        ? new Date(b.created_at).getTime()
+        : 0;
+
+    if (aTime !== bTime) return aTime - bTime;
+
+    return Number(a.id) - Number(b.id);
+  });
+
+  const allItems: OrderItem[] = sortedItems.map((item: any) => ({
+    id: String(item.id),
+    productId: String(item.produto_id || item.id),
+    productName: item.produto_nome,
+    quantity: Number(item.quantidade),
+    unitPrice: Number(item.preco_unitario),
+    batchId: item.lote_id ?? undefined,
+    batchNotes: item.lote_observacao || item.batch_notes || '',
+    createdAt: item.batch_created_at || item.created_at || o.created_at,
+    additions: mapAdditionsFromDb(item.adicionais),
+  }));
+
+  const groupedBatches = new Map<number, OrderBatch>();
+
+  sortedItems.forEach((item: any) => {
+    const batchNumber = Number(item.batch_number || 1);
+
+    if (!groupedBatches.has(batchNumber)) {
+      groupedBatches.set(batchNumber, {
+        id: item.lote_id
+          ? String(item.lote_id)
+          : `order-${o.id}-batch-${batchNumber}`,
+        items: [],
+        notes: item.batch_notes || item.lote_observacao || o.observacao || '',
+        createdAt: item.batch_created_at || item.created_at || o.created_at,
+        isAdditional: batchNumber > 1,
+      });
+    }
+
+    groupedBatches.get(batchNumber)!.items.push({
+      id: String(item.id),
+      productId: String(item.produto_id || item.id),
+      productName: item.produto_nome,
+      quantity: Number(item.quantidade),
+      unitPrice: Number(item.preco_unitario),
+      batchId: item.lote_id ?? undefined,
+      batchNotes: item.lote_observacao || item.batch_notes || '',
+      createdAt: item.batch_created_at || item.created_at || o.created_at,
+      additions: mapAdditionsFromDb(item.adicionais),
+    });
+  });
+
+  return {
+    id: String(o.id),
+    number: Number(o.id),
+    customerName: o.cliente_nome,
+    total: Number(o.valor_total),
+    status: (o.status || 'new') as OrderStatus,
+    paid: o.pago ?? false,
+    paymentMethod: o.forma_pagamento as PaymentMethod,
+    notes: o.observacao ?? '',
+    createdAt: o.created_at ? new Date(o.created_at) : new Date(),
+    paidAt: o.paid_at ? new Date(o.paid_at) : undefined,
+    cashSessionId: o.cash_session_id ?? null,
+    amountReceived:
+      o.amount_received != null ? Number(o.amount_received) : null,
+    changeGiven: o.change_given != null ? Number(o.change_given) : null,
+    createdBy: o.created_by ?? null,
+    mesaId: o.mesa_id ? String(o.mesa_id) : null,
+    items: allItems,
+    itemBatches: Array.from(groupedBatches.values()).sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    ),
+    loja_id: o.loja_id ? String(o.loja_id) : undefined,
+  };
+}
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [orders, setOrders] = useState<Order[]>([]);
@@ -280,10 +379,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       await Promise.all([fetchUsers(), fetchMesas()]);
 
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+
       const { data: orderData, error: orderError } = await supabase
         .from('pedidos')
-        .select('*, pedido_itens(*)')
+        .select(ORDER_WITH_ITEMS_SELECT)
         .eq('loja_id', lojaAtualId)
+        .or(
+          [
+            'status.neq.paid',
+            'pago.eq.false',
+            `paid_at.gte.${todayStart.toISOString()}`,
+            `created_at.gte.${todayStart.toISOString()}`,
+          ].join(',')
+        )
         .order('created_at', { ascending: false });
 
       if (orderError) {
@@ -291,105 +401,56 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const mappedOrders: Order[] = (orderData ?? []).map((o: any) => {
-        const itemRows = Array.isArray(o.pedido_itens) ? o.pedido_itens : [];
-
-        const sortedItems = [...itemRows].sort((a: any, b: any) => {
-          const batchCompare =
-            Number(a.batch_number || 1) - Number(b.batch_number || 1);
-
-          if (batchCompare !== 0) return batchCompare;
-
-          const aTime = a.batch_created_at
-            ? new Date(a.batch_created_at).getTime()
-            : a.created_at
-              ? new Date(a.created_at).getTime()
-              : 0;
-
-          const bTime = b.batch_created_at
-            ? new Date(b.batch_created_at).getTime()
-            : b.created_at
-              ? new Date(b.created_at).getTime()
-              : 0;
-
-          if (aTime !== bTime) return aTime - bTime;
-
-          return Number(a.id) - Number(b.id);
-        });
-
-        const allItems: OrderItem[] = sortedItems.map((item: any) => ({
-          id: String(item.id),
-          productId: String(item.produto_id || item.id),
-          productName: item.produto_nome,
-          quantity: Number(item.quantidade),
-          unitPrice: Number(item.preco_unitario),
-          batchId: item.lote_id ?? undefined,
-          batchNotes: item.lote_observacao || item.batch_notes || '',
-          createdAt: item.batch_created_at || item.created_at || o.created_at,
-          additions: mapAdditionsFromDb(item.adicionais),
-        }));
-
-        const groupedBatches = new Map<number, OrderBatch>();
-
-        sortedItems.forEach((item: any) => {
-          const batchNumber = Number(item.batch_number || 1);
-
-          if (!groupedBatches.has(batchNumber)) {
-            groupedBatches.set(batchNumber, {
-              id: item.lote_id
-                ? String(item.lote_id)
-                : `order-${o.id}-batch-${batchNumber}`,
-              items: [],
-              notes: item.batch_notes || item.lote_observacao || o.observacao || '',
-              createdAt: item.batch_created_at || item.created_at || o.created_at,
-              isAdditional: batchNumber > 1,
-            });
-          }
-
-          groupedBatches.get(batchNumber)!.items.push({
-            id: String(item.id),
-            productId: String(item.produto_id || item.id),
-            productName: item.produto_nome,
-            quantity: Number(item.quantidade),
-            unitPrice: Number(item.preco_unitario),
-            batchId: item.lote_id ?? undefined,
-            batchNotes: item.lote_observacao || item.batch_notes || '',
-            createdAt: item.batch_created_at || item.created_at || o.created_at,
-            additions: mapAdditionsFromDb(item.adicionais),
-          });
-        });
-
-        return {
-          id: String(o.id),
-          number: Number(o.id),
-          customerName: o.cliente_nome,
-          total: Number(o.valor_total),
-          status: (o.status || 'new') as OrderStatus,
-          paid: o.pago ?? false,
-          paymentMethod: o.forma_pagamento as PaymentMethod,
-          notes: o.observacao ?? '',
-          createdAt: o.created_at ? new Date(o.created_at) : new Date(),
-          paidAt: o.paid_at ? new Date(o.paid_at) : undefined,
-          cashSessionId: o.cash_session_id ?? null,
-          amountReceived:
-            o.amount_received != null ? Number(o.amount_received) : null,
-          changeGiven: o.change_given != null ? Number(o.change_given) : null,
-          createdBy: o.created_by ?? null,
-          mesaId: o.mesa_id ? String(o.mesa_id) : null,
-          items: allItems,
-          itemBatches: Array.from(groupedBatches.values()).sort(
-            (a, b) =>
-              new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-          ),
-          loja_id: o.loja_id ? String(o.loja_id) : undefined,
-        };
-      });
+      const mappedOrders: Order[] = (orderData ?? []).map(mapOrderFromDb);
 
       setOrders(mappedOrders);
     } catch (error) {
       console.error('Erro ao buscar dados:', error);
     }
   }, [fetchUsers, fetchMesas, lojaAtualId]);
+
+  const fetchOrdersByPeriod = useCallback(
+    async (
+      startDate: Date,
+      endDate: Date,
+      options?: { paidOnly?: boolean }
+    ) => {
+      if (!lojaAtualId) return [];
+
+      const startIso = startDate.toISOString();
+      const endIso = endDate.toISOString();
+
+      let query = supabase
+        .from('pedidos')
+        .select(ORDER_WITH_ITEMS_SELECT)
+        .eq('loja_id', lojaAtualId)
+        .order('created_at', { ascending: false });
+
+      if (options?.paidOnly) {
+        query = query
+          .or(
+            [
+              `and(paid_at.gte.${startIso},paid_at.lte.${endIso})`,
+              `and(created_at.gte.${startIso},created_at.lte.${endIso})`,
+            ].join(',')
+          )
+          .or('status.eq.paid,pago.eq.true');
+      } else {
+        query = query.gte('created_at', startIso).lte('created_at', endIso);
+      }
+
+      const { data, error } = await query;
+
+      if (error) {
+        console.error('Erro ao buscar pedidos por período:', error);
+        toast.error('Não foi possível carregar os pedidos do período.');
+        return [];
+      }
+
+      return (data ?? []).map(mapOrderFromDb);
+    },
+    [lojaAtualId]
+  );
 
   useEffect(() => {
     fetchData();
@@ -442,11 +503,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         { event: '*', schema: 'public', table: 'mesas', filter: `loja_id=eq.${lojaAtualId}` },
         () => refreshNow()
       )
-      .subscribe((status) => {
-        console.log('Realtime GK Orders:', status);
-        // REMOVIDO: refreshNow() não deve ser chamado no 'SUBSCRIBED'. 
-        // Ele causava o loop infinito na internet.
-      });
+      .subscribe();
 
     const handleFocus = () => { refreshNow(); };
     const handleVisibilityChange = () => {
@@ -1471,6 +1528,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         fetchUsers,
         fetchMesas,
         fetchData,
+        fetchOrdersByPeriod,
         addOrder,
         updateOrder,
         appendItemsToOrder,
@@ -1505,6 +1563,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 const dummyFallbackState: AppState = {
   orders: [], products: [], users: [], categories: [], mesas: [], orderCounter: 0, lojaAtualId: null,
   fetchUsers: async () => {}, fetchMesas: async () => {}, fetchData: async () => {},
+  fetchOrdersByPeriod: async () => [],
   addOrder: async () => {}, updateOrder: async () => {}, appendItemsToOrder: async () => {},
   updateOrderItem: async () => {}, deleteOrderItem: async () => {}, moveOrder: async () => {},
   deleteOrder: async () => {}, payOrder: async () => {}, payOrdersBulk: async () => {},

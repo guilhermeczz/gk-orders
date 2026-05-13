@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { useAppStore } from '@/lib/store';
 import { AppHeader } from '@/components/AppHeader';
 
@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import type { Order } from '@/lib/types';
 
 function formatDate(d: Date) {
   return d.toLocaleDateString('pt-BR');
@@ -111,8 +112,9 @@ function getOrderStatusInfo(order: any) {
 }
 
 export function ReportsPage() {
-  // ADICIONADO: Extraído o lojaAtualId para garantir o isolamento
-  const { getArchivedOrders, lojaAtualId } = useAppStore();
+  const { fetchOrdersByPeriod, lojaAtualId } = useAppStore();
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
 
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -122,15 +124,14 @@ export function ReportsPage() {
 
   const [endDate, setEndDate] = useState(() => toInputDate(new Date()));
 
-  // =========================================================================
-  // OTIMIZAÇÃO: Bloqueia a consulta se não tiver loja selecionada
-  // =========================================================================
-  const orders = useMemo(() => {
-    if (!lojaAtualId) return [];
+  useEffect(() => {
+    if (!lojaAtualId) {
+      setOrders([]);
+      return;
+    }
 
     const startBase = fromInputDate(startDate);
     const endBase = fromInputDate(endDate);
-
     const start = new Date(
       startBase.getFullYear(),
       startBase.getMonth(),
@@ -151,8 +152,21 @@ export function ReportsPage() {
       999
     );
 
-    return getArchivedOrders(start, end);
-  }, [startDate, endDate, getArchivedOrders, lojaAtualId]);
+    let active = true;
+    setLoadingOrders(true);
+
+    fetchOrdersByPeriod(start, end)
+      .then((result) => {
+        if (active) setOrders(result);
+      })
+      .finally(() => {
+        if (active) setLoadingOrders(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [startDate, endDate, fetchOrdersByPeriod, lojaAtualId]);
 
   const paidOrders = useMemo(
     () => orders.filter((o) => o.status === 'paid' || o.paid),
@@ -311,7 +325,7 @@ export function ReportsPage() {
 
             <button
               onClick={handleDownloadPDF}
-              disabled={totalRevenue === 0}
+              disabled={loadingOrders || totalRevenue === 0}
               className="flex items-center gap-2 px-5 py-2.5 bg-background border border-border hover:border-primary hover:text-primary text-foreground rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
             >
               <Download className="w-5 h-5" />
@@ -345,7 +359,21 @@ export function ReportsPage() {
             </div>
           </div>
 
-          {totalRevenue === 0 ? (
+          {loadingOrders ? (
+            <div className="bg-card border border-border rounded-3xl p-12 flex flex-col items-center justify-center text-center shadow-lg animate-slide-up mt-4">
+              <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+                <LineChart className="w-12 h-12 text-primary" />
+              </div>
+
+              <h3 className="text-2xl font-black text-foreground mb-2">
+                Carregando relatório
+              </h3>
+
+              <p className="text-muted-foreground max-w-md">
+                Buscando somente os pedidos do período selecionado.
+              </p>
+            </div>
+          ) : totalRevenue === 0 ? (
             <div className="bg-card border border-border rounded-3xl p-12 flex flex-col items-center justify-center text-center shadow-lg animate-slide-up mt-4">
               <div className="w-24 h-24 bg-primary/10 rounded-full flex items-center justify-center mb-6">
                 <Store className="w-12 h-12 text-primary" />

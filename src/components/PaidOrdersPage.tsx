@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { AppHeader } from '@/components/AppHeader';
 import {
@@ -20,6 +20,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 import { useAppStore } from '@/lib/store';
+import type { Order } from '@/lib/types';
 
 function formatMoney(val: number) {
   return new Intl.NumberFormat('pt-BR', {
@@ -76,10 +77,11 @@ function normalizeText(value: string) {
 }
 
 export function PaidOrdersPage() {
-  // ADICIONADO: lojaAtualId para garantir a blindagem do isolamento dos dados
-  const { orders, lojaAtualId } = useAppStore();
+  const { orders: liveOrders, fetchOrdersByPeriod, lojaAtualId } = useAppStore();
 
   const [searchTerm, setSearchTerm] = useState('');
+  const [paidOrders, setPaidOrders] = useState<Order[]>([]);
+  const [loadingOrders, setLoadingOrders] = useState(false);
 
   const [startDate, setStartDate] = useState(() => {
     const d = new Date();
@@ -89,25 +91,14 @@ export function PaidOrdersPage() {
 
   const [endDate, setEndDate] = useState(() => toInputDate(new Date()));
 
-  // ============================================================================
-  // OTIMIZAÇÃO: Filtra os pagos e já garante a segurança do lojaAtualId
-  // ============================================================================
-  const paidOrders = useMemo(() => {
-    if (!lojaAtualId) return []; // Blindagem de segurança
+  useEffect(() => {
+    if (!lojaAtualId) {
+      setPaidOrders([]);
+      return;
+    }
 
-    return orders
-      .filter((order) => order.status === 'paid' || order.paid)
-      .sort(
-        (a, b) =>
-          new Date(b.paidAt || b.createdAt).getTime() -
-          new Date(a.paidAt || a.createdAt).getTime()
-      );
-  }, [orders, lojaAtualId]);
-
-  const paidOrdersByDate = useMemo(() => {
     const startBase = fromInputDate(startDate);
     const endBase = fromInputDate(endDate);
-
     const start = new Date(
       startBase.getFullYear(),
       startBase.getMonth(),
@@ -128,18 +119,38 @@ export function PaidOrdersPage() {
       999
     );
 
-    return paidOrders.filter((order) => {
-      const date = new Date(order.paidAt || order.createdAt);
-      return date >= start && date <= end;
-    });
-  }, [paidOrders, startDate, endDate]);
+    let active = true;
+    setLoadingOrders(true);
+
+    fetchOrdersByPeriod(start, end, { paidOnly: true })
+      .then((result) => {
+        if (!active) return;
+
+        setPaidOrders(
+          result
+            .filter((order) => order.status === 'paid' || order.paid)
+            .sort(
+              (a, b) =>
+                new Date(b.paidAt || b.createdAt).getTime() -
+                new Date(a.paidAt || a.createdAt).getTime()
+            )
+        );
+      })
+      .finally(() => {
+        if (active) setLoadingOrders(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [startDate, endDate, fetchOrdersByPeriod, lojaAtualId]);
 
   const filteredPaidOrders = useMemo(() => {
     const q = normalizeText(searchTerm);
 
-    if (!q) return paidOrdersByDate;
+    if (!q) return paidOrders;
 
-    return paidOrdersByDate.filter((order) => {
+    return paidOrders.filter((order) => {
       const number = String(order.number || '');
       const customer = normalizeText(String(order.customerName || ''));
       const method = normalizeText(getPaymentMethodLabel(order.paymentMethod));
@@ -152,7 +163,7 @@ export function PaidOrdersPage() {
         total.includes(q)
       );
     });
-  }, [paidOrdersByDate, searchTerm]);
+  }, [paidOrders, searchTerm]);
 
   const totalPaid = useMemo(() => {
     return filteredPaidOrders.reduce((sum, order) => sum + Number(order.total || 0), 0);
@@ -164,10 +175,10 @@ export function PaidOrdersPage() {
   const totalToday = useMemo(() => {
     const todayStr = new Date().toDateString(); // Fica fora do loop (O(1))
 
-    return paidOrders
+    return liveOrders
       .filter((order) => new Date(order.paidAt || order.createdAt).toDateString() === todayStr)
       .reduce((sum, order) => sum + Number(order.total || 0), 0);
-  }, [paidOrders]);
+  }, [liveOrders]);
 
   const paymentStats = useMemo(() => {
     const totals = {
@@ -312,7 +323,7 @@ export function PaidOrdersPage() {
 
             <button
               onClick={handleDownloadPDF}
-              disabled={filteredPaidOrders.length === 0}
+              disabled={loadingOrders || filteredPaidOrders.length === 0}
               className="flex items-center justify-center gap-2 px-5 py-3 bg-background border border-border hover:border-primary hover:text-primary text-foreground rounded-xl font-bold transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
             >
               <Download className="w-5 h-5" />
@@ -388,7 +399,16 @@ export function PaidOrdersPage() {
           </div>
 
           <div className="space-y-3">
-            {filteredPaidOrders.length === 0 && (
+            {loadingOrders && (
+              <div className="bg-card border border-border rounded-2xl p-12 text-center">
+                <p className="text-lg font-bold text-foreground">Carregando pedidos pagos...</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Buscando somente o período selecionado.
+                </p>
+              </div>
+            )}
+
+            {!loadingOrders && filteredPaidOrders.length === 0 && (
               <div className="bg-card border border-dashed border-border rounded-2xl p-12 text-center">
                 <CheckCircle2 className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <p className="text-lg font-bold text-foreground">Nenhum pedido pago encontrado</p>

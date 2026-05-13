@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
+import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 import { 
   Plus, 
@@ -17,6 +18,18 @@ import {
 } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { AppHeader } from '@/components/AppHeader';
+
+const normalizeText = (value: string) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+const isAdditionsCategory = (category: any) => {
+  const name = normalizeText(category?.name);
+  return name.includes('adicional') || name.includes('adicionais') || name.includes('extra');
+};
 
 export function ProductsPage() {
   const {
@@ -63,9 +76,6 @@ export function ProductsPage() {
   const [deleteProdTarget, setDeleteProdTarget] = useState<any | null>(null);
   const [deleteCatTarget, setDeleteCatTarget] = useState<any | null>(null);
 
-  // =========================================================================
-  // INTELIGÊNCIA DE CATEGORIAS
-  // =========================================================================
   const categoriesMap = useMemo(() => {
     const map = new Map<string, any>();
     categories.forEach(cat => map.set(String(cat.id), cat));
@@ -78,13 +88,12 @@ export function ProductsPage() {
   }, [categoriesMap]);
 
   const additionsCategory = useMemo(() => {
-    return categories.find(c => {
-      const name = c.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      return name.includes('adicional') || name.includes('adicionais') || name.includes('extra');
-    });
+    return categories.find(isAdditionsCategory);
   }, [categories]);
 
-  // =========================================================================
+  const visibleCategories = useMemo(() => {
+    return categories.filter((category) => !isAdditionsCategory(category));
+  }, [categories]);
 
   const checkScroll = useCallback(() => {
     if (scrollContainerRef.current) {
@@ -103,18 +112,20 @@ export function ProductsPage() {
     };
   }, [categories, activeTab, showProdForm, checkScroll]);
 
-  // CORREÇÃO: Piloto Automático de Categorias
   useEffect(() => {
     if (activeTab === 'additions') {
       if (additionsCategory) setCategoryId(additionsCategory.id);
     } else if (activeTab === 'products') {
-      // Se não tem categoria selecionada ainda, pega a primeira que NÃO seja de adicionais
-      if (!categoryId && categories.length > 0) {
-        const firstNormalCat = categories.find(c => !additionsCategory || c.id !== additionsCategory.id);
+      const hasVisibleCategorySelected = visibleCategories.some(
+        (category) => String(category.id) === String(categoryId)
+      );
+
+      if (!hasVisibleCategorySelected && visibleCategories.length > 0) {
+        const firstNormalCat = visibleCategories[0];
         if (firstNormalCat) setCategoryId(firstNormalCat.id);
       }
     }
-  }, [activeTab, additionsCategory, categories, categoryId]);
+  }, [activeTab, additionsCategory, visibleCategories, categoryId]);
 
   const handleScrollRight = () => {
     scrollContainerRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
@@ -124,17 +135,35 @@ export function ProductsPage() {
     scrollContainerRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   };
 
+  const ensureAdditionsCategory = async () => {
+    if (additionsCategory) return String(additionsCategory.id);
+    if (!lojaAtualId) throw new Error('Loja não identificada.');
+
+    const { data, error } = await supabase
+      .from('categorias')
+      .insert([
+        {
+          loja_id: lojaAtualId,
+          nome: 'Adicionais',
+          emoji: '+',
+        },
+      ])
+      .select('id')
+      .single();
+
+    if (error || !data?.id) {
+      throw error ?? new Error('Não foi possível criar a categoria de adicionais.');
+    }
+
+    return String(data.id);
+  };
+
   const handleSubmitProduct = async () => {
     if (!lojaAtualId) return toast.error('Loja não identificada. Saia e entre novamente.');
 
-    const targetCategoryId = activeTab === 'additions' ? additionsCategory?.id : categoryId;
-
-    if (activeTab === 'additions' && !targetCategoryId) {
-      return toast.error('Por favor, crie uma categoria chamada "Adicionais" na aba de Categorias primeiro.');
-    }
-
-    // CORREÇÃO: Converte vírgula para ponto e valida direito
     const numericPrice = parseFloat(String(price).replace(',', '.'));
+    const targetCategoryId =
+      activeTab === 'additions' ? additionsCategory?.id ?? 'auto' : categoryId;
 
     const nextErrors = {
       name: !name.trim(),
@@ -149,22 +178,23 @@ export function ProductsPage() {
 
     setLoadingProd(true);
     try {
+      const resolvedCategoryId =
+        activeTab === 'additions' ? await ensureAdditionsCategory() : targetCategoryId;
+
       if (editProdId) {
         await updateProduct({
           id: editProdId,
           name: name.trim(),
           price: numericPrice,
-          categoryId: targetCategoryId!,
+          categoryId: resolvedCategoryId,
         });
-        // Quando é update, o toast já é disparado pela store
       } else {
         const success = await addProduct({
           name: name.trim(),
           price: numericPrice,
-          categoryId: targetCategoryId!,
+          categoryId: resolvedCategoryId,
         });
-        
-        // CORREÇÃO: Se falhar no banco, não dá mensagem verde!
+
         if (!success) {
           throw new Error("Não foi possível salvar no banco de dados.");
         }
@@ -254,7 +284,8 @@ export function ProductsPage() {
     const query = searchQuery.toLowerCase().trim();
     
     return products.filter(p => {
-      const isAdicional = additionsCategory && p.categoryId === additionsCategory.id;
+      const category = categoriesMap.get(String(p.categoryId));
+      const isAdicional = category ? isAdditionsCategory(category) : false;
       
       if (activeTab === 'products' && isAdicional) return false;
       if (activeTab === 'additions' && !isAdicional) return false;
@@ -264,7 +295,7 @@ export function ProductsPage() {
       
       return matchesSearch && (activeTab === 'additions' ? true : matchesCategory);
     });
-  }, [products, searchQuery, activeCategoryFilter, activeTab, additionsCategory]);
+  }, [products, searchQuery, activeCategoryFilter, activeTab, categoriesMap]);
 
   const inputClass = "w-full px-4 py-3.5 rounded-xl bg-white text-black border border-border placeholder:text-gray-400 focus:outline-none focus:border-primary focus:shadow-[0_0_15px_rgba(255,106,0,0.2)] transition-all font-medium";
   const inputErrorClass = 'border-red-500 ring-4 ring-red-500/10 focus:border-red-500';
@@ -325,12 +356,12 @@ export function ProductsPage() {
 
                 {!showProdForm && (
                   <button onClick={() => setShowProdForm(true)} className="w-full md:w-auto bg-primary text-black font-black px-6 py-3 rounded-xl text-sm shadow-md hover:opacity-90 transition-all flex items-center justify-center gap-2 active:scale-95 hover:shadow-[0_0_15px_rgba(255,106,0,0.3)] hover:-translate-y-0.5">
-                    <Plus className="w-5 h-5" /> Adicionar {activeTab === 'additions' ? 'Extra' : 'Produto'}
+                    <Plus className="w-5 h-5" /> Adicionar {activeTab === 'additions' ? 'Adicional' : 'Produto'}
                   </button>
                 )}
               </div>
 
-              {!showProdForm && activeTab === 'products' && categories.length > 0 && (
+              {!showProdForm && activeTab === 'products' && visibleCategories.length > 0 && (
                 <div className="flex items-center gap-2 mb-6 w-full">
                   <button
                     onClick={handleScrollLeft}
@@ -351,9 +382,7 @@ export function ProductsPage() {
                     >
                       🍔 Todos
                     </button>
-                    {categories.map(cat => {
-                      if (additionsCategory && cat.id === additionsCategory.id) return null;
-                      
+                    {visibleCategories.map(cat => {
                       return (
                         <button
                           key={cat.id}
@@ -388,12 +417,6 @@ export function ProductsPage() {
                     <button onClick={cancelEditProduct} className="p-2 text-gray-400 hover:text-destructive hover:bg-destructive/20 rounded-lg transition-all"><X className="w-6 h-6"/></button>
                   </div>
 
-                  {activeTab === 'additions' && !additionsCategory && (
-                    <div className="mb-6 p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-400 text-sm font-medium">
-                      ⚠️ O sistema não encontrou uma categoria chamada "Adicionais". Vá na aba Categorias e crie uma para liberar este formulário!
-                    </div>
-                  )}
-
                   <div className={`grid grid-cols-1 ${activeTab === 'additions' ? 'md:grid-cols-2' : 'md:grid-cols-2'} gap-5 mb-5`}>
                     <div>
                       <label className="text-sm font-bold text-gray-300 mb-2 block">
@@ -407,7 +430,6 @@ export function ProductsPage() {
                         }}
                         placeholder={activeTab === 'additions' ? "Adicional" : "Produto"}
                         className={`${inputClass} ${prodErrors.name ? inputErrorClass : name.trim() ? inputSuccessClass : ''}`}
-                        disabled={activeTab === 'additions' && !additionsCategory}
                       />
                     </div>
                     <div>
@@ -424,7 +446,6 @@ export function ProductsPage() {
                         step="0.01"
                         placeholder="0.00"
                         className={`${inputClass} ${prodErrors.price ? inputErrorClass : Number(String(price).replace(',', '.')) > 0 ? inputSuccessClass : ''}`}
-                        disabled={activeTab === 'additions' && !additionsCategory}
                       />
                     </div>
                   </div>
@@ -441,7 +462,7 @@ export function ProductsPage() {
                         className={`${inputClass} ${prodErrors.categoryId ? inputErrorClass : categoryId ? inputSuccessClass : ''}`}
                       >
                         <option value="" disabled>Selecione uma categoria...</option>
-                        {categories.map(cat => (
+                        {visibleCategories.map(cat => (
                           <option key={cat.id} value={cat.id}>{cat.emoji} {cat.name}</option>
                         ))}
                       </select>
@@ -450,7 +471,7 @@ export function ProductsPage() {
 
                   <button 
                     onClick={handleSubmitProduct} 
-                    disabled={loadingProd || (activeTab === 'additions' && !additionsCategory)} 
+                    disabled={loadingProd} 
                     className="w-full py-4 mt-3 rounded-xl bg-primary text-black font-black text-[15px] shadow-lg disabled:opacity-50 flex items-center justify-center gap-2 transition-all active:scale-95 hover:shadow-[0_0_20px_rgba(255,106,0,0.4)]"
                   >
                     {loadingProd ? <Loader2 className="w-5 h-5 animate-spin" /> : editProdId ? 'Salvar Alterações' : 'Confirmar Cadastro'}
@@ -464,7 +485,7 @@ export function ProductsPage() {
                     {searchQuery 
                       ? 'Nenhum item encontrado na pesquisa.' 
                       : activeTab === 'additions' 
-                        ? 'Nenhum adicional cadastrado. Clique em Adicionar Extra para começar!'
+                        ? 'Nenhum adicional cadastrado. Clique em Adicionar Adicional para começar!'
                         : 'Nenhum produto cadastrado nesta categoria.'}
                   </p>
                 )}
@@ -542,8 +563,8 @@ export function ProductsPage() {
               )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {categories.length === 0 && !showCatForm && <p className="col-span-full text-center py-12 text-muted-foreground bg-card rounded-2xl border border-dashed border-border font-medium">Nenhuma categoria cadastrada.</p>}
-                {categories.map(cat => (
+                {visibleCategories.length === 0 && !showCatForm && <p className="col-span-full text-center py-12 text-muted-foreground bg-card rounded-2xl border border-dashed border-border font-medium">Nenhuma categoria cadastrada.</p>}
+                {visibleCategories.map(cat => (
                   <div key={cat.id} className="flex items-center justify-between bg-card border border-border rounded-xl px-5 py-4 transition-all duration-300 hover:border-primary/50 hover:shadow-lg hover:-translate-y-1 group">
                     <div className="flex items-center gap-4">
                       <span className="text-4xl drop-shadow-md">{cat.emoji}</span>

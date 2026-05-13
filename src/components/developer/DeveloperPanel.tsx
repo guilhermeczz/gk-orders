@@ -27,7 +27,7 @@ import {
   UploadCloud,
   AlertTriangle,
 } from 'lucide-react';
-import { Link, useNavigate } from '@tanstack/react-router';
+import { Link } from '@tanstack/react-router';
 import { toast } from 'sonner';
 import { AppHeader } from '@/components/AppHeader';
 import { supabase } from '@/lib/supabase';
@@ -99,6 +99,10 @@ const emptyUserForm: UserFormData = {
   perfil: 'operador',
 };
 
+const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024;
+const MAX_INITIAL_TABLES = 200;
+const VALID_USER_PROFILES = new Set(['admin_loja', 'operador']);
+
 function makeSlug(value: string) {
   return String(value || '')
     .normalize('NFD')
@@ -140,7 +144,6 @@ function perfilLabel(perfil: string) {
 
 export function DeveloperPanel() {
   const { register } = useAuth();
-  const navigate = useNavigate();
 
   const [lojas, setLojas] = useState<Loja[]>([]);
   const [loading, setLoading] = useState(true);
@@ -160,10 +163,11 @@ export function DeveloperPanel() {
   const [userForm, setUserForm] = useState<UserFormData>(emptyUserForm);
   const [editingUser, setEditingUser] = useState<LojaUsuario | null>(null);
 
-  // NOVO ESTADO: Controle do modal de exclusão da loja
   const [deleteStoreModalOpen, setDeleteStoreModalOpen] = useState(false);
   const [deletingLoja, setDeletingLoja] = useState<Loja | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [accessLojaTarget, setAccessLojaTarget] = useState<Loja | null>(null);
+  const [quickActionKey, setQuickActionKey] = useState<string | null>(null);
 
   const fetchLojas = async () => {
     setLoading(true);
@@ -248,12 +252,23 @@ export function DeveloperPanel() {
     await fetchLojaUsers(loja.id);
   };
 
-  const accessStore = (loja: Loja) => {
+  const requestAccessStore = (loja: Loja) => {
     if (!loja.ativa) {
       toast.error('Essa loja está inativa. Ative a loja antes de acessar.');
       return;
     }
+    setAccessLojaTarget(loja);
+  };
+
+  const confirmAccessStore = () => {
+    if (!accessLojaTarget) return;
+
+    const loja = accessLojaTarget;
     setCurrentStoreId(loja.id);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('gk_orders_developer_access_store_name', loja.nome);
+      sessionStorage.setItem('gk_orders_developer_access_store_slug', loja.slug);
+    }
     toast.success(`Acessando ${loja.nome}...`);
     setTimeout(() => {
       window.location.href = '/dashboard';
@@ -372,13 +387,37 @@ export function DeveloperPanel() {
   const saveStore = async () => {
     const nome = form.nome.trim();
     const slug = makeSlug(form.slug || form.nome);
+    const quantidadeMesas = Number(form.quantidadeMesas || 0);
 
     if (!nome) return toast.error('Informe o nome da loja.');
     if (!slug) return toast.error('Informe um slug válido.');
+    if (slug.length < 3) return toast.error('O slug precisa ter pelo menos 3 caracteres.');
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) return toast.error('Use apenas letras, números e hífen no slug.');
+    if (!Number.isInteger(quantidadeMesas) || quantidadeMesas < 0 || quantidadeMesas > MAX_INITIAL_TABLES) {
+      return toast.error(`Informe uma quantidade de mesas entre 0 e ${MAX_INITIAL_TABLES}.`);
+    }
+    if (logoFile && !logoFile.type.startsWith('image/')) {
+      return toast.error('Envie um arquivo de imagem válido para a logo.');
+    }
+    if (logoFile && logoFile.size > MAX_LOGO_SIZE_BYTES) {
+      return toast.error('A logo deve ter no máximo 2 MB.');
+    }
 
     setSaving(true);
 
     try {
+      const { data: slugOwner, error: slugError } = await supabase
+        .from('lojas')
+        .select('id')
+        .eq('slug', slug)
+        .maybeSingle();
+
+      if (slugError) throw slugError;
+      if (slugOwner && (!editingLoja || String(slugOwner.id) !== String(editingLoja.id))) {
+        toast.error('Já existe uma loja com esse slug.');
+        return;
+      }
+
       let finalLogoUrl = form.logo_url;
 
       if (logoFile) {
@@ -460,7 +499,7 @@ export function DeveloperPanel() {
           }]);
 
         if (configError) toast.warning('Loja criada, mas a configuração inicial não foi criada.');
-        await createInitialMesas(lojaId, Number(form.quantidadeMesas || 0));
+        await createInitialMesas(lojaId, quantidadeMesas);
         toast.success('Loja criada com sucesso!');
       }
 
@@ -491,10 +530,36 @@ export function DeveloperPanel() {
     const perfil = userForm.perfil;
 
     if (!nome || !username) return toast.error('Preencha nome e usuário.');
+    if (nome.length < 3) return toast.error('O nome precisa ter pelo menos 3 caracteres.');
+    if (username.length < 3) return toast.error('O usuário precisa ter pelo menos 3 caracteres.');
+    if (!VALID_USER_PROFILES.has(perfil)) return toast.error('Perfil de usuário inválido.');
 
     setSavingUser(true);
     try {
+      const { data: usernameOwner, error: usernameError } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('loja_id', lojaIdAtual)
+        .eq('username', username)
+        .maybeSingle();
+
+      if (usernameError) throw usernameError;
+      if (usernameOwner && (!editingUser || String(usernameOwner.id) !== String(editingUser.id))) {
+        toast.error('Usuário já existe nesta loja.');
+        return;
+      }
+
       if (editingUser) {
+        const duplicatedUser = lojaUsers.some(
+          (u) =>
+            String(u.id) !== String(editingUser.id) &&
+            normalizeUsername(u.username) === username
+        );
+        if (duplicatedUser) {
+          toast.error('Usuário já existe nesta loja.');
+          return;
+        }
+
         const { error } = await supabase.from('usuarios').update({ nome, username, perfil }).eq('id', editingUser.id);
         if (error) throw error;
         if (senha) {
@@ -530,17 +595,72 @@ export function DeveloperPanel() {
   const toggleStoreUserStatus = async (usuario: LojaUsuario) => {
     if (!selectedLojaUsers) return;
     const nextStatus = !usuario.ativo;
-    await supabase.from('usuarios').update({ ativo: nextStatus }).eq('id', usuario.id).eq('loja_id', selectedLojaUsers.id);
-    await supabase.from('usuario_lojas').update({ ativo: nextStatus }).eq('usuario_id', usuario.id).eq('loja_id', selectedLojaUsers.id);
-    toast.success(nextStatus ? 'Usuário ativado!' : 'Usuário desativado!');
-    await fetchLojaUsers(selectedLojaUsers.id);
+    const lojaId = selectedLojaUsers.id;
+    const actionKey = `user-status-${usuario.id}`;
+
+    try {
+      setQuickActionKey(actionKey);
+      const { error: usuarioError } = await supabase
+        .from('usuarios')
+        .update({ ativo: nextStatus })
+        .eq('id', usuario.id)
+        .eq('loja_id', lojaId);
+
+      if (usuarioError) throw usuarioError;
+
+      const { error: vinculoError } = await supabase
+        .from('usuario_lojas')
+        .update({ ativo: nextStatus })
+        .eq('usuario_id', usuario.id)
+        .eq('loja_id', lojaId);
+
+      if (vinculoError) {
+        await supabase
+          .from('usuarios')
+          .update({ ativo: usuario.ativo })
+          .eq('id', usuario.id)
+          .eq('loja_id', lojaId);
+        throw vinculoError;
+      }
+
+      toast.success(nextStatus ? 'Usuário ativado!' : 'Usuário desativado!');
+      await fetchLojaUsers(lojaId);
+    } catch (error) {
+      console.error('Erro ao alterar status do usuário:', error);
+      toast.error('Não foi possível alterar o status do usuário.');
+      await fetchLojaUsers(lojaId);
+    } finally {
+      setQuickActionKey(null);
+    }
   };
 
   const toggleStoreStatus = async (loja: Loja) => {
     const nextStatus = !loja.ativa;
-    const { error } = await supabase.from('lojas').update({ ativa: nextStatus, updated_at: new Date().toISOString() }).eq('id', loja.id);
-    if (error) toast.error('Não foi possível alterar o status da loja.');
-    else { toast.success(nextStatus ? 'Loja ativada!' : 'Loja desativada!'); fetchLojas(); }
+    const actionKey = `store-status-${loja.id}`;
+    try {
+      setQuickActionKey(actionKey);
+      const { error } = await supabase
+        .from('lojas')
+        .update({ ativa: nextStatus, updated_at: new Date().toISOString() })
+        .eq('id', loja.id);
+
+      if (error) throw error;
+
+      setLojas((prev) =>
+        prev.map((item) =>
+          String(item.id) === String(loja.id)
+            ? { ...item, ativa: nextStatus, updated_at: new Date().toISOString() }
+            : item
+        )
+      );
+      toast.success(nextStatus ? 'Loja ativada!' : 'Loja desativada!');
+    } catch (error) {
+      console.error('Erro ao alterar status da loja:', error);
+      toast.error('Não foi possível alterar o status da loja.');
+      await fetchLojas();
+    } finally {
+      setQuickActionKey(null);
+    }
   };
 
   return (
@@ -634,7 +754,7 @@ export function DeveloperPanel() {
                   </div>
 
                   <div className="flex flex-wrap justify-start gap-2 md:justify-end">
-                    <button onClick={() => accessStore(loja)} className="inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-primary hover:bg-primary/20">
+                    <button onClick={() => requestAccessStore(loja)} className="inline-flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-black text-primary hover:bg-primary/20">
                       <ExternalLink className="h-3.5 w-3.5" /> Acessar
                     </button>
                     <button onClick={() => openUsersModal(loja)} className="inline-flex items-center gap-2 rounded-xl border border-purple-500/30 bg-purple-500/10 px-3 py-2 text-xs font-black text-purple-300 hover:bg-purple-500/20">
@@ -643,8 +763,13 @@ export function DeveloperPanel() {
                     <button onClick={() => openEditModal(loja)} className="inline-flex items-center gap-2 rounded-xl border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs font-black text-blue-400 hover:bg-blue-500/20">
                       <Pencil className="h-3.5 w-3.5" /> Editar
                     </button>
-                    <button onClick={() => toggleStoreStatus(loja)} className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black ${loja.ativa ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'}`}>
-                      <Power className="h-3.5 w-3.5" /> {loja.ativa ? 'Desativar' : 'Ativar'}
+                    <button
+                      onClick={() => toggleStoreStatus(loja)}
+                      disabled={quickActionKey === `store-status-${loja.id}`}
+                      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-black disabled:opacity-60 ${loja.ativa ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20' : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'}`}
+                    >
+                      {quickActionKey === `store-status-${loja.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Power className="h-3.5 w-3.5" />}
+                      {loja.ativa ? 'Desativar' : 'Ativar'}
                     </button>
                     {/* NOVO BOTÃO DE EXCLUIR */}
                     <button onClick={() => confirmDeleteStore(loja)} className="inline-flex items-center gap-2 rounded-xl border border-red-500/30 bg-transparent px-3 py-2 text-xs font-black text-red-400 hover:bg-red-500/10 transition">
@@ -674,9 +799,52 @@ export function DeveloperPanel() {
       {usersModalOpen && selectedLojaUsers && (
         <UsersModal
           loja={selectedLojaUsers} users={lojaUsers} loadingUsers={loadingUsers} savingUser={savingUser} userForm={userForm} editingUser={editingUser}
+          quickActionKey={quickActionKey}
           onClose={() => { setUsersModalOpen(false); setSelectedLojaUsers(null); setLojaUsers([]); setUserForm(emptyUserForm); setEditingUser(null); }}
           onChange={handleUserChange} onSaveUser={saveStoreUser} onToggleUser={toggleStoreUserStatus} onEditUser={editStoreUser} onDeleteUser={deleteStoreUser}
         />
+      )}
+
+      {accessLojaTarget && (
+        <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-md overflow-hidden rounded-3xl border border-primary/20 bg-[#101010] text-white shadow-2xl animate-slide-up">
+            <div className="p-6">
+              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10 text-primary">
+                <ExternalLink className="h-7 w-7" />
+              </div>
+
+              <p className="text-xs font-black uppercase tracking-[0.2em] text-primary">
+                Acesso de suporte
+              </p>
+              <h3 className="mt-2 text-2xl font-black">{accessLojaTarget.nome}</h3>
+              <p className="mt-1 text-sm font-bold text-gray-400">/{accessLojaTarget.slug}</p>
+
+              <div className="mt-5 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4">
+                <p className="text-sm font-black text-amber-300">Você vai entrar no ambiente desta loja.</p>
+                <p className="mt-1 text-xs leading-relaxed text-amber-100/80">
+                  Use este acesso apenas para suporte, validação ou manutenção. O sistema trocará a loja ativa do navegador.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-white/10 p-5 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setAccessLojaTarget(null)}
+                className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-3 text-sm font-bold text-white hover:bg-white/10"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmAccessStore}
+                className="flex-1 rounded-2xl bg-primary py-3 text-sm font-black text-black hover:opacity-90"
+              >
+                Acessar loja
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* NOVO MODAL: CONFIRMAÇÃO DE EXCLUSÃO DA LOJA */}
@@ -866,6 +1034,7 @@ function UsersModal({
   users,
   loadingUsers,
   savingUser,
+  quickActionKey,
   userForm,
   editingUser,
   onClose,
@@ -879,6 +1048,7 @@ function UsersModal({
   users: LojaUsuario[];
   loadingUsers: boolean;
   savingUser: boolean;
+  quickActionKey: string | null;
   userForm: UserFormData;
   editingUser: LojaUsuario | null;
   onClose: () => void;
@@ -1094,13 +1264,18 @@ function UsersModal({
                         <button
                           type="button"
                           onClick={() => onToggleUser(usuario)}
+                          disabled={quickActionKey === `user-status-${usuario.id}`}
                           className={`inline-flex items-center justify-center gap-2 rounded-xl border px-3 py-2 text-xs font-black transition ${
                             usuario.ativo
                               ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20'
                               : 'border-green-500/30 bg-green-500/10 text-green-400 hover:bg-green-500/20'
-                          }`}
+                          } disabled:opacity-60`}
                         >
-                          <Power className="h-3.5 w-3.5" />
+                          {quickActionKey === `user-status-${usuario.id}` ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Power className="h-3.5 w-3.5" />
+                          )}
                           {usuario.ativo ? 'Desativar' : 'Ativar'}
                         </button>
                       </div>
