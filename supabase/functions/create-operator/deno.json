@@ -1,4 +1,7 @@
 {
+  "compilerOptions": {
+    "lib": ["deno.ns", "dom", "dom.iterable", "esnext"]
+  },
   "imports": {
     "@supabase/functions-js": "jsr:@supabase/functions-js@^2"
   }

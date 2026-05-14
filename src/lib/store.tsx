@@ -43,6 +43,7 @@ interface OrderExtraData {
   paymentMethod?: PaymentMethod | null;
   amountReceived?: number | null;
   changeGiven?: number | null;
+  clienteTelefone?: string | null;
 }
 
 const normalizeAdditionsForDb = (additions?: OrderItem['additions']) => {
@@ -274,6 +275,7 @@ function mapOrderFromDb(o: any): Order {
     amountReceived:
       o.amount_received != null ? Number(o.amount_received) : null,
     changeGiven: o.change_given != null ? Number(o.change_given) : null,
+    clienteTelefone: o.cliente_telefone ?? null,
     createdBy: o.created_by ?? null,
     mesaId: o.mesa_id ? String(o.mesa_id) : null,
     items: allItems,
@@ -580,6 +582,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             paid_at: extraData?.paid ? new Date().toISOString() : null,
             amount_received: extraData?.amountReceived ?? null,
             change_given: extraData?.changeGiven ?? null,
+            cliente_telefone: extraData?.clienteTelefone ?? null,
             observacao: notes,
             created_by: safeCreatedBy,
             mesa_id: mesaId ?? null,

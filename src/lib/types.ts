@@ -63,6 +63,7 @@ export interface Order {
   amountReceived?: number | null;
   changeGiven?: number | null;
   createdBy?: string | null;
+  clienteTelefone?: string | null;
   mesaId?: string | null;
   tipoPedido?: OrderType;
   taxaEntrega?: number;

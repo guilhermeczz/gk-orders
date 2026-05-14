@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Search, Plus, X, Printer, CreditCard, Trash2, Pencil, Receipt, Users, LayoutGrid, Banknote, AlertTriangle, UtensilsCrossed } from 'lucide-react';
+import { Search, Plus, X, Printer, CreditCard, Trash2, Pencil, Receipt, Users, LayoutGrid, Banknote, AlertTriangle, UtensilsCrossed, MessageCircle } from 'lucide-react';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
@@ -9,6 +9,7 @@ import { supabase } from '@/lib/supabase';
 import type { Mesa, Order, OrderBatch, OrderItem } from '@/lib/types';
 import { NewOrderModal } from './NewOrderModal';
 import { useAuth } from '@/lib/auth';
+import { buildPickupReadyMessage, buildWhatsappUrl } from '@/lib/whatsapp';
 
 const removerAcentos = (str: string) => {
   return String(str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -620,6 +621,7 @@ export function MesaDashboard() {
           onClose={() => setEditRetiradaTarget(null)}
           editOrderId={editRetiradaTarget.id}
           initialCustomerName={editRetiradaTarget.customerName}
+          initialCustomerPhone={editRetiradaTarget.clienteTelefone}
           initialCart={orderItemsToCart(editRetiradaTarget)}
           initialCartAdditions={orderItemsToCartAdditions(editRetiradaTarget)}
           initialNotes={editRetiradaTarget.notes}
@@ -1450,6 +1452,14 @@ function RetiradaCard({
 }) {
   const { user } = useAuth();
   const podePagar = user?.perfil === 'admin_loja' || user?.isDeveloper;
+  const openPickupMessage = () => {
+    if (!order.clienteTelefone) {
+      toast.error('Este pedido não tem WhatsApp cadastrado.');
+      return;
+    }
+
+    window.open(buildWhatsappUrl(order.clienteTelefone, buildPickupReadyMessage(order)), '_blank', 'noopener,noreferrer');
+  };
 
   const batches: OrderBatch[] =
     Array.isArray(order.itemBatches) && order.itemBatches.length > 0
@@ -1558,6 +1568,15 @@ function RetiradaCard({
           >
             <Trash2 className="w-4 h-4" />
             Excluir
+          </button>
+
+          <button
+            type="button"
+            onClick={openPickupMessage}
+            className="flex items-center gap-2 text-xs font-bold px-3 py-2 border border-green-500/30 bg-green-500/10 text-green-400 rounded-md"
+          >
+            <MessageCircle className="w-4 h-4" />
+            Avisar pronto
           </button>
 
           {podePagar && (

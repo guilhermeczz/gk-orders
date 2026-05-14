@@ -56,6 +56,79 @@ function parseMoneyInput(value: string) {
   return Number(String(value || '').replace(/\s/g, '').replace(',', '.'));
 }
 
+type CashWithdrawal = {
+  id: string;
+  amount: number;
+  note: string;
+  createdAt: string;
+  operator: string;
+};
+
+type CashWithdrawalRow = {
+  id: string | number;
+  amount: number | string;
+  note: string;
+  created_at: string;
+  operator: string | null;
+};
+
+const CASH_WITHDRAWALS_REGEX = /\n?\n?\[\[GK_CASH_WITHDRAWALS:(.*?)\]\]/s;
+
+function parseCashSessionNotes(rawNotes?: string | null) {
+  const source = String(rawNotes || '');
+  const match = source.match(CASH_WITHDRAWALS_REGEX);
+
+  if (!match) {
+    return { visibleNotes: source.trim(), withdrawals: [] as CashWithdrawal[] };
+  }
+
+  try {
+    const parsed = JSON.parse(match[1]);
+    const withdrawals = Array.isArray(parsed)
+      ? parsed
+          .map((item) => ({
+            id: String(item.id || ''),
+            amount: Number(item.amount || 0),
+            note: String(item.note || ''),
+            createdAt: String(item.createdAt || ''),
+            operator: String(item.operator || ''),
+          }))
+          .filter((item) => item.id && item.amount > 0)
+      : [];
+
+    return {
+      visibleNotes: source.replace(CASH_WITHDRAWALS_REGEX, '').trim(),
+      withdrawals,
+    };
+  } catch {
+    return {
+      visibleNotes: source.replace(CASH_WITHDRAWALS_REGEX, '').trim(),
+      withdrawals: [] as CashWithdrawal[],
+    };
+  }
+}
+
+function mapCashWithdrawal(row: CashWithdrawalRow): CashWithdrawal {
+  return {
+    id: String(row.id),
+    amount: Number(row.amount || 0),
+    note: String(row.note || ''),
+    createdAt: String(row.created_at || ''),
+    operator: String(row.operator || ''),
+  };
+}
+
+function getSessionWithdrawals(session: any): CashWithdrawal[] {
+  const tableWithdrawals = Array.isArray(session?.cashWithdrawals) ? session.cashWithdrawals : [];
+  const legacyWithdrawals = parseCashSessionNotes(session?.notes).withdrawals;
+  const tableIds = new Set(tableWithdrawals.map((withdrawal: CashWithdrawal) => withdrawal.id));
+
+  return [
+    ...tableWithdrawals,
+    ...legacyWithdrawals.filter((withdrawal) => !tableIds.has(withdrawal.id)),
+  ];
+}
+
 export function CashRegisterPage() {
   // Extraímos o lojaAtualId do store para aplicar os filtros
   const { orders, lojaAtualId } = useAppStore();
@@ -75,6 +148,10 @@ export function CashRegisterPage() {
   const [countedTotal, setCountedTotal] = useState('');
   const [differenceValue, setDifferenceValue] = useState('');
   const [notes, setNotes] = useState('');
+  const [withdrawalAmount, setWithdrawalAmount] = useState('');
+  const [withdrawalNote, setWithdrawalNote] = useState('');
+  const [withdrawalLoading, setWithdrawalLoading] = useState(false);
+  const [cashWithdrawals, setCashWithdrawals] = useState<CashWithdrawal[]>([]);
 
   const fetchOpenSession = useCallback(async () => {
     if (!lojaAtualId) return; // Evita queries se a loja não estiver definida
@@ -94,6 +171,31 @@ export function CashRegisterPage() {
     }
 
     setOpenSession(data ?? null);
+
+    if (!data) {
+      setCashWithdrawals([]);
+      return;
+    }
+
+    const { data: withdrawalsData, error: withdrawalsError } = await supabase
+      .from('cash_withdrawals')
+      .select('id, amount, note, created_at, operator')
+      .eq('loja_id', lojaAtualId)
+      .eq('cash_session_id', data.id)
+      .order('created_at', { ascending: false });
+
+    if (withdrawalsError) {
+      console.error('Erro ao buscar sangrias:', withdrawalsError);
+      setCashWithdrawals(parseCashSessionNotes(data.notes).withdrawals);
+      return;
+    }
+
+    setCashWithdrawals(
+      getSessionWithdrawals({
+        notes: data.notes,
+        cashWithdrawals: (withdrawalsData ?? []).map((row: CashWithdrawalRow) => mapCashWithdrawal(row)),
+      })
+    );
   }, [lojaAtualId]);
 
   const fetchHistoryByDate = useCallback(async () => {
@@ -116,7 +218,42 @@ export function CashRegisterPage() {
       return;
     }
 
-    setDailyClosings(data ?? []);
+    const closings = data ?? [];
+
+    if (closings.length === 0) {
+      setDailyClosings([]);
+      return;
+    }
+
+    const sessionIds = closings.map((closing) => closing.id);
+    const { data: withdrawalsData, error: withdrawalsError } = await supabase
+      .from('cash_withdrawals')
+      .select('id, cash_session_id, amount, note, created_at, operator')
+      .eq('loja_id', lojaAtualId)
+      .in('cash_session_id', sessionIds)
+      .order('created_at', { ascending: false });
+
+    if (withdrawalsError) {
+      console.error('Erro ao buscar sangrias do histórico:', withdrawalsError);
+      setDailyClosings(closings);
+      return;
+    }
+
+    const withdrawalsBySession = new Map<number, CashWithdrawal[]>();
+
+    (withdrawalsData ?? []).forEach((row: CashWithdrawalRow & { cash_session_id: number }) => {
+      const sessionId = Number(row.cash_session_id);
+      const list = withdrawalsBySession.get(sessionId) ?? [];
+      list.push(mapCashWithdrawal(row));
+      withdrawalsBySession.set(sessionId, list);
+    });
+
+    setDailyClosings(
+      closings.map((closing) => ({
+        ...closing,
+        cashWithdrawals: withdrawalsBySession.get(Number(closing.id)) ?? [],
+      }))
+    );
   }, [historyDate, lojaAtualId]);
 
   useEffect(() => {
@@ -171,9 +308,17 @@ export function CashRegisterPage() {
     return Number(openSession?.opening_amount || 0);
   }, [openSession]);
 
+  const openSessionNotes = useMemo(() => {
+    return parseCashSessionNotes(openSession?.notes);
+  }, [openSession?.notes]);
+
+  const totalWithdrawals = useMemo(() => {
+    return cashWithdrawals.reduce((sum, withdrawal) => sum + Number(withdrawal.amount || 0), 0);
+  }, [cashWithdrawals]);
+
   const availableChangeNow = useMemo(() => {
-    return openingCash + totalReceivedCash - totalChangeGiven;
-  }, [openingCash, totalReceivedCash, totalChangeGiven]);
+    return openingCash + totalReceivedCash - totalChangeGiven - totalWithdrawals;
+  }, [openingCash, totalReceivedCash, totalChangeGiven, totalWithdrawals]);
 
   const handleOpenRegister = async () => {
     if (!lojaAtualId) {
@@ -237,6 +382,51 @@ export function CashRegisterPage() {
     }
   };
 
+  const handleRegisterWithdrawal = async () => {
+    if (!openSession || !lojaAtualId) {
+      return toast.error('Nenhum caixa aberto encontrado.');
+    }
+
+    const amount = parseMoneyInput(withdrawalAmount);
+
+    if (Number.isNaN(amount) || withdrawalAmount.trim() === '' || amount <= 0) {
+      return toast.error('Informe um valor de sangria válido.');
+    }
+
+    if (!withdrawalNote.trim()) {
+      return toast.error('Informe o motivo da sangria.');
+    }
+
+    if (amount > availableChangeNow) {
+      return toast.error(`Sangria maior que o disponível no caixa: R$ ${money(availableChangeNow)}.`);
+    }
+
+    setWithdrawalLoading(true);
+
+    try {
+      const { error } = await supabase.from('cash_withdrawals').insert([
+        {
+          loja_id: lojaAtualId,
+          cash_session_id: openSession.id,
+          amount,
+          note: withdrawalNote.trim(),
+          operator: user?.name || 'Operador',
+        },
+      ]);
+
+      if (error) throw error;
+
+      toast.success('Sangria registrada.');
+      setWithdrawalAmount('');
+      setWithdrawalNote('');
+      await fetchOpenSession();
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro ao registrar sangria.');
+    } finally {
+      setWithdrawalLoading(false);
+    }
+  };
   const handleCloseRegister = async (hasDifference: boolean) => {
     if (!openSession || !lojaAtualId) {
       return toast.error('Nenhum caixa aberto encontrado.');
@@ -252,7 +442,7 @@ export function CashRegisterPage() {
       return toast.error('O valor contado não pode ser negativo.');
     }
 
-    let diff = counted - expectedTotal;
+    let diff = counted - availableChangeNow;
 
     if (hasDifference) {
       const manualDiff = parseMoneyInput(differenceValue);
@@ -267,15 +457,20 @@ export function CashRegisterPage() {
     setLoading(true);
 
     try {
+      const closingNote = notes || (diff === 0 ? 'Fechamento exato.' : 'Fechamento com divergência.');
+      const visibleNotes = [openSessionNotes.visibleNotes, closingNote]
+        .filter(Boolean)
+        .join(' | Fechamento: ');
+
       const { error } = await supabase
         .from('cash_sessions')
         .update({
           closed_at: new Date().toISOString(),
           closed_by: user?.name || 'Operador',
-          expected_total: expectedTotal,
+          expected_total: availableChangeNow,
           counted_total: counted,
           difference: diff,
-          notes: notes || (diff === 0 ? 'Fechamento exato.' : 'Fechamento com divergência.'),
+          notes: visibleNotes || null,
           status: 'closed',
         })
         .eq('loja_id', lojaAtualId) // Camada extra de segurança
@@ -325,12 +520,17 @@ export function CashRegisterPage() {
     const totalSistema = dailyClosings.reduce((sum, c) => sum + Number(c.expected_total || 0), 0);
     const totalContado = dailyClosings.reduce((sum, c) => sum + Number(c.counted_total || 0), 0);
     const totalDiferenca = dailyClosings.reduce((sum, c) => sum + Number(c.difference || 0), 0);
+    const totalSangria = dailyClosings.reduce((sum, c) => {
+      const withdrawals = getSessionWithdrawals(c);
+      return sum + withdrawals.reduce((subtotal, item) => subtotal + Number(item.amount || 0), 0);
+    }, 0);
 
     autoTable(doc, {
       startY: 52,
       head: [['Resumo', 'Valor']],
       body: [
         ['Total no sistema', `R$ ${money(totalSistema)}`],
+        ['Total de sangrias', `R$ ${money(totalSangria)}`],
         ['Total contado', `R$ ${money(totalContado)}`],
         ['Diferença líquida', `R$ ${money(totalDiferenca)}`],
         ['Fechamentos do dia', String(dailyClosings.length)],
@@ -353,21 +553,26 @@ export function CashRegisterPage() {
           })
         : '-';
 
+      const { visibleNotes } = parseCashSessionNotes(closing.notes);
+      const withdrawals = getSessionWithdrawals(closing);
+      const withdrawalsTotal = withdrawals.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+
       return [
         dateText,
         closing.opened_by || '-',
         closing.closed_by || '-',
         `R$ ${money(Number(closing.opening_amount || 0))}`,
         `R$ ${money(Number(closing.expected_total || 0))}`,
+        `R$ ${money(withdrawalsTotal)}`,
         `R$ ${money(Number(closing.counted_total || 0))}`,
         `R$ ${money(Number(closing.difference || 0))}`,
-        closing.notes || '-',
+        visibleNotes || '-',
       ];
     });
 
     autoTable(doc, {
       startY: (doc as any).lastAutoTable.finalY + 8,
-      head: [['Data/Hora', 'Aberto por', 'Fechado por', 'Inicial', 'Sistema', 'Contado', 'Diferença', 'Observação']],
+      head: [['Data/Hora', 'Aberto por', 'Fechado por', 'Inicial', 'Sistema', 'Sangria', 'Contado', 'Diferenca', 'Observacao']],
       body: tableData,
       theme: 'striped',
       headStyles: {
@@ -558,7 +763,49 @@ export function CashRegisterPage() {
                       Disponível p/ troco
                     </div>
                     <p className="text-2xl font-black text-white">R$ {money(availableChangeNow)}</p>
-                    <p className="text-sm text-green-300/80 mt-2">Inicial + recebido - troco</p>
+                    <p className="text-sm text-green-300/80 mt-2">Inicial + recebido - troco - sangria</p>
+                  </div>
+                </div>
+
+                <div className="mb-8 rounded-2xl border border-red-500/25 bg-red-500/10 p-5 shadow-inner">
+                  <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-widest text-red-400">Sangria</p>
+                      <h4 className="text-lg font-black text-foreground">Retirada de dinheiro do caixa</h4>
+                    </div>
+
+                    <div className="rounded-xl border border-red-500/25 bg-background px-4 py-2 text-right">
+                      <p className="text-[10px] font-black uppercase text-red-300">Total retirado</p>
+                      <p className="text-xl font-black text-red-400">R$ {money(totalWithdrawals)}</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-[160px_1fr_auto]">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Valor"
+                      value={withdrawalAmount}
+                      onChange={(e) => setWithdrawalAmount(e.target.value)}
+                      className={inputClass}
+                    />
+                    <input
+                      type="text"
+                      required
+                      placeholder="Motivo obrigatório. Ex: retirada para compra"
+                      value={withdrawalNote}
+                      onChange={(e) => setWithdrawalNote(e.target.value)}
+                      className={inputClass}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleRegisterWithdrawal}
+                      disabled={withdrawalLoading}
+                      className="rounded-xl bg-red-600 px-5 py-3.5 font-black text-white shadow-lg transition-all hover:bg-red-500 disabled:opacity-50"
+                    >
+                      {withdrawalLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : 'Registrar'}
+                    </button>
                   </div>
                 </div>
 
@@ -770,6 +1017,69 @@ export function CashRegisterPage() {
             </div>
           )}
 
+          {openSession && (
+            <div className="mb-12 animate-fade-in">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <h3 className="font-black text-foreground text-xl flex items-center gap-2">
+                  <Banknote className="w-5 h-5 text-red-400" /> Histórico de Sangrias
+                  <span className="text-sm bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-0.5 rounded-full">
+                    {cashWithdrawals.length}
+                  </span>
+                </h3>
+
+                <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2">
+                  <p className="text-[10px] uppercase font-black text-red-300">Total retirado</p>
+                  <p className="text-lg font-black text-red-400">R$ {money(totalWithdrawals)}</p>
+                </div>
+              </div>
+
+              {cashWithdrawals.length === 0 ? (
+                <p className="text-center py-8 text-muted-foreground bg-card rounded-2xl border border-dashed border-border font-medium shadow-sm">
+                  Nenhuma sangria registrada neste caixa.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {cashWithdrawals.map((withdrawal) => (
+                    <div
+                      key={withdrawal.id}
+                      className="bg-card border border-red-500/20 rounded-xl p-4 shadow-sm flex flex-col gap-3 md:flex-row md:items-center md:justify-between hover:border-red-500/40 transition-all"
+                    >
+                      <div>
+                        <div className="flex flex-wrap items-center gap-3 mb-1">
+                          <span className="font-black text-red-400">
+                            - R$ {money(withdrawal.amount)}
+                          </span>
+                          <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-muted text-muted-foreground">
+                            {withdrawal.createdAt
+                              ? new Date(withdrawal.createdAt).toLocaleTimeString('pt-BR', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
+                              : '--:--'}
+                          </span>
+                        </div>
+
+                        <p className="font-bold text-foreground">{withdrawal.note}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Operador: <span className="font-bold">{withdrawal.operator || '-'}</span>
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl border border-gray-800 bg-[#111] px-4 py-2 text-right">
+                        <p className="text-[10px] uppercase font-bold text-gray-500">Registrado em</p>
+                        <p className="font-bold text-foreground">
+                          {withdrawal.createdAt
+                            ? new Date(withdrawal.createdAt).toLocaleDateString('pt-BR')
+                            : '-'}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 mt-12 border-t border-border pt-8">
             <h3 className="font-black text-foreground text-xl">Histórico de Fechamentos</h3>
 
@@ -814,6 +1124,10 @@ export function CashRegisterPage() {
                   })
                 : 'Data Indisponível';
 
+              const { visibleNotes } = parseCashSessionNotes(closing.notes);
+              const withdrawals = getSessionWithdrawals(closing);
+              const withdrawalsTotal = withdrawals.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+
               return (
                 <div
                   key={closing.id}
@@ -839,10 +1153,25 @@ export function CashRegisterPage() {
                       <span className="font-bold">{closing.closed_by || '-'}</span>
                     </p>
 
-                    {closing.notes && (
+                    {visibleNotes && (
                       <p className="text-xs mt-1 italic text-muted-foreground/70 border-l-2 border-border pl-2">
-                        {closing.notes}
+                        {visibleNotes}
                       </p>
+                    )}
+
+                    {withdrawals.length > 0 && (
+                      <div className="mt-3 rounded-xl border border-red-500/20 bg-red-500/10 p-3">
+                        <p className="mb-2 text-[10px] font-black uppercase tracking-wider text-red-400">
+                          Sangrias registradas: R$ {money(withdrawalsTotal)}
+                        </p>
+                        <div className="space-y-1">
+                          {withdrawals.map((withdrawal) => (
+                            <p key={withdrawal.id} className="text-xs text-muted-foreground">
+                              {withdrawal.createdAt ? new Date(withdrawal.createdAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--'} - R$ {money(withdrawal.amount)} - {withdrawal.note}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
 
@@ -855,6 +1184,17 @@ export function CashRegisterPage() {
                         R$ {money(Number(closing.expected_total || 0))}
                       </p>
                     </div>
+
+                    {withdrawalsTotal > 0 && (
+                      <div className="text-right border-l border-gray-800 pl-6">
+                        <p className="text-[10px] uppercase font-bold text-gray-500 mb-0.5">
+                          Sangria
+                        </p>
+                        <p className="font-black text-red-400">
+                          R$ {money(withdrawalsTotal)}
+                        </p>
+                      </div>
+                    )}
 
                     <div className="text-right border-l border-gray-800 pl-6">
                       <p className="text-[10px] uppercase font-bold text-gray-500 mb-0.5">
@@ -895,3 +1235,4 @@ function StatCard({ label, value, icon, color }: any) {
     </div>
   );
 }
+

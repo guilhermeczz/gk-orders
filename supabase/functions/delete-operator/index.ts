@@ -1,3 +1,4 @@
+import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const corsHeaders = {
@@ -7,19 +8,23 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-Deno.serve(async (req) => {
+function jsonResponse(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...corsHeaders,
+      'Content-Type': 'application/json',
+    },
+  });
+}
+
+serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
 
   if (req.method !== 'POST') {
-    return new Response(
-      JSON.stringify({ error: 'Método não permitido.' }),
-      {
-        status: 405,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
+    return jsonResponse({ error: 'Metodo nao permitido.' }, 405);
   }
 
   try {
@@ -27,25 +32,13 @@ Deno.serve(async (req) => {
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!supabaseUrl || !serviceRoleKey) {
-      return new Response(
-        JSON.stringify({ error: 'Variáveis de ambiente ausentes.' }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'Variaveis de ambiente ausentes.' }, 500);
     }
 
     const authHeader = req.headers.get('Authorization');
 
     if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Usuário não autenticado.' }),
-        {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'Usuario nao autenticado.' }, 401);
     }
 
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
@@ -73,68 +66,57 @@ Deno.serve(async (req) => {
     } = await supabaseUserClient.auth.getUser();
 
     if (loggedUserError || !loggedUser) {
-      return new Response(
-        JSON.stringify({ error: 'Sessão inválida.' }),
-        {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'Sessao invalida.' }, 401);
     }
 
     const { userId } = await req.json();
 
     if (!userId) {
-      return new Response(
-        JSON.stringify({ error: 'ID do usuário não informado.' }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'ID do usuario nao informado.' }, 400);
     }
 
     const { data: targetUser, error: targetUserError } = await supabaseAdmin
       .from('usuarios')
-      .select('id, nome, username')
+      .select('id, nome, username, auth_user_id')
       .eq('id', userId)
       .maybeSingle();
 
     if (targetUserError) {
-      console.error('Erro ao buscar usuário alvo:', targetUserError);
-
-      return new Response(
-        JSON.stringify({ error: 'Erro ao buscar usuário.' }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      console.error('Erro ao buscar usuario alvo:', targetUserError);
+      return jsonResponse({ error: 'Erro ao buscar usuario.' }, 500);
     }
 
     if (!targetUser) {
-      return new Response(
-        JSON.stringify({ error: 'Usuário não encontrado.' }),
-        {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'Usuario nao encontrado.' }, 404);
     }
 
     const targetName = String(targetUser.nome || '').trim().toLowerCase();
     const targetUsername = String(targetUser.username || '').trim().toLowerCase();
 
     if (targetName === 'desenvolvedor' || targetUsername === 'dev') {
-      return new Response(
-        JSON.stringify({
-          error: 'O acesso do Desenvolvedor é protegido e não pode ser removido.',
-        }),
-        {
-          status: 403,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
+      return jsonResponse(
+        { error: 'O acesso do Desenvolvedor e protegido e nao pode ser removido.' },
+        403
       );
+    }
+
+    const authUserId = String(targetUser.auth_user_id || '').trim();
+
+    if (!authUserId) {
+      return jsonResponse(
+        { error: 'Usuario sem vinculo com Auth. Verifique o cadastro antes de excluir.' },
+        400
+      );
+    }
+
+    const { error: deleteLinkError } = await supabaseAdmin
+      .from('usuario_lojas')
+      .delete()
+      .eq('usuario_id', userId);
+
+    if (deleteLinkError) {
+      console.error('Erro ao excluir vinculos usuario_lojas:', deleteLinkError);
+      return jsonResponse({ error: 'Erro ao excluir vinculos do usuario.' }, 500);
     }
 
     const { error: deleteTableError } = await supabaseAdmin
@@ -144,54 +126,28 @@ Deno.serve(async (req) => {
 
     if (deleteTableError) {
       console.error('Erro ao excluir da tabela usuarios:', deleteTableError);
-
-      return new Response(
-        JSON.stringify({ error: 'Erro ao excluir usuário da tabela.' }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      return jsonResponse({ error: 'Erro ao excluir usuario da tabela.' }, 500);
     }
 
     const { error: deleteAuthError } =
-      await supabaseAdmin.auth.admin.deleteUser(userId);
+      await supabaseAdmin.auth.admin.deleteUser(authUserId);
 
     if (deleteAuthError) {
-      console.error('Erro ao excluir usuário do Auth:', deleteAuthError);
-
-      return new Response(
-        JSON.stringify({
-          error:
-            'Usuário removido da tabela, mas não foi possível remover do Auth.',
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
+      console.error('Erro ao excluir usuario do Auth:', deleteAuthError);
+      return jsonResponse(
+        { error: 'Usuario removido da tabela, mas nao foi possivel remover do Auth.' },
+        500
       );
     }
 
-    return new Response(
-      JSON.stringify({
-        success: true,
-        deletedUserId: userId,
-        deletedCurrentUser: String(loggedUser.id) === String(userId),
-      }),
-      {
-        status: 200,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
+    return jsonResponse({
+      success: true,
+      deletedUserId: userId,
+      deletedAuthUserId: authUserId,
+      deletedCurrentUser: String(loggedUser.id) === String(authUserId),
+    });
   } catch (error) {
     console.error('Erro inesperado:', error);
-
-    return new Response(
-      JSON.stringify({ error: 'Erro inesperado ao excluir usuário.' }),
-      {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      }
-    );
+    return jsonResponse({ error: 'Erro inesperado ao excluir usuario.' }, 500);
   }
 });

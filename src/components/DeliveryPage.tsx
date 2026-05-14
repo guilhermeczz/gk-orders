@@ -4,8 +4,9 @@ import { NewOrderModal } from '@/components/NewOrderModal';
 import { useAppStore } from '@/lib/store';
 import { supabase } from '@/lib/supabase';
 import type { DeliveryStatus, Order } from '@/lib/types';
-import { Bike, Clock, Flame, MapPinned, CheckCircle2, Plus, Phone, Wallet } from 'lucide-react';
+import { Bike, Clock, Flame, MapPinned, CheckCircle2, Plus, Phone, Wallet, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { buildDeliveryOutMessage, buildWhatsappUrl } from '@/lib/whatsapp';
 
 const deliveryColumns: Array<{ status: DeliveryStatus; title: string; icon: any }> = [
   { status: 'pendente', title: 'Pendente', icon: Clock },
@@ -114,6 +115,17 @@ export function DeliveryPage() {
     }
   };
 
+  const openDeliveryMessage = (order: Order) => {
+    const phone = order.metadataDelivery?.whatsapp || order.clienteTelefone || '';
+
+    if (!phone) {
+      toast.error('Este pedido não tem WhatsApp cadastrado.');
+      return;
+    }
+
+    window.open(buildWhatsappUrl(phone, buildDeliveryOutMessage(order)), '_blank', 'noopener,noreferrer');
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="print:hidden">
@@ -208,14 +220,26 @@ export function DeliveryPage() {
                         </div>
 
                         {next && (
-                          <button
-                            type="button"
-                            disabled={updatingId === order.id}
-                            onClick={() => updateStatus(order, next)}
-                            className="mt-4 w-full rounded-lg bg-primary px-3 py-2 text-xs font-black text-black transition-all hover:opacity-90 disabled:opacity-50"
-                          >
-                            {actionLabel[column.status]}
-                          </button>
+                          <div className="mt-4 grid grid-cols-1 gap-2">
+                            <button
+                              type="button"
+                              disabled={updatingId === order.id}
+                              onClick={() => updateStatus(order, next)}
+                              className="w-full rounded-lg bg-primary px-3 py-2 text-xs font-black text-black transition-all hover:opacity-90 disabled:opacity-50"
+                            >
+                              {actionLabel[column.status]}
+                            </button>
+
+                            {column.status === 'preparo' && (
+                              <button
+                                type="button"
+                                onClick={() => openDeliveryMessage(order)}
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs font-black text-green-400 transition-all hover:bg-green-500/20"
+                              >
+                                <MessageCircle className="h-4 w-4" /> Mensagem: saiu para entrega
+                              </button>
+                            )}
+                          </div>
                         )}
                       </article>
                     );

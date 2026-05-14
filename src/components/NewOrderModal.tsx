@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
-import type { OrderItem, OrderItemAddition, Product, Mesa } from '@/lib/types';
+import type { OrderItem, OrderItemAddition, Product, Mesa, PaymentMethod } from '@/lib/types';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import {
@@ -17,6 +17,18 @@ import {
   Truck,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
+import { onlyDigits } from '@/lib/whatsapp';
+
+type QuickCustomer = {
+  id: string;
+  nome: string;
+  telefone: string;
+  rua?: string | null;
+  numero?: string | null;
+  bairro?: string | null;
+  complemento?: string | null;
+  referencia?: string | null;
+};
 
 interface NewOrderModalProps {
   open: boolean;
@@ -24,6 +36,7 @@ interface NewOrderModalProps {
   editOrderId?: string | null;
   appendOrderId?: string | null;
   initialCustomerName?: string;
+  initialCustomerPhone?: string | null;
   initialCart?: Record<string, number>;
   initialCartAdditions?: Record<string, Record<string, number>>;
   initialNotes?: string;
@@ -67,6 +80,7 @@ export function NewOrderModal({
   hideOrderTypeSelector,
   appendOrderId,
   initialCustomerName,
+  initialCustomerPhone,
   initialCart,
   initialCartAdditions,
   initialNotes,
@@ -90,6 +104,10 @@ export function NewOrderModal({
   const [selectedMesaId, setSelectedMesaId] = useState<string>('');
   const [mesaDropdownAberto, setMesaDropdownAberto] = useState(false);
   const [deliveryData, setDeliveryData] = useState(emptyDeliveryData);
+  const [pickupPhone, setPickupPhone] = useState('');
+  const [customerMatch, setCustomerMatch] = useState<QuickCustomer | null>(null);
+  const [customerLookupPhone, setCustomerLookupPhone] = useState('');
+  const [customerLookupLoading, setCustomerLookupLoading] = useState(false);
 
   const [fieldErrors, setFieldErrors] = useState<{
     customerName?: boolean;
@@ -224,7 +242,14 @@ export function NewOrderModal({
     setSearch('');
     setShowSummary(false);
     setMesaDropdownAberto(false);
-    setDeliveryData(emptyDeliveryData);
+    setDeliveryData({
+      ...emptyDeliveryData,
+      whatsapp: parsedType === 'Delivery' ? onlyDigits(initialCustomerPhone || '') : '',
+    });
+    setPickupPhone(parsedType === 'Retirada' ? onlyDigits(initialCustomerPhone || '') : '');
+    setCustomerMatch(null);
+    setCustomerLookupPhone('');
+    setCustomerLookupLoading(false);
     setFieldErrors({});
 
     if (mesaId) {
@@ -237,6 +262,7 @@ export function NewOrderModal({
     editOrderId,
     appendOrderId,
     initialCustomerName,
+    initialCustomerPhone,
     initialCart,
     initialCartAdditions,
     initialNotes,
@@ -356,11 +382,121 @@ export function NewOrderModal({
 
   const deliveryFee = Number(String(deliveryData.taxaEntrega || '0').replace(',', '.')) || 0;
   const totalComEntrega = total + (orderType === 'Delivery' ? deliveryFee : 0);
-  const deliveryWhatsappDigits = deliveryData.whatsapp.replace(/\D/g, '');
+  const deliveryWhatsappDigits = onlyDigits(deliveryData.whatsapp);
+  const pickupPhoneDigits = onlyDigits(pickupPhone);
+  const customerLookupDigits = orderType === 'Delivery' ? deliveryWhatsappDigits : orderType === 'Retirada' ? pickupPhoneDigits : '';
 
   const updateDeliveryField = (field: keyof typeof emptyDeliveryData, value: string) => {
     setDeliveryData((prev) => ({ ...prev, [field]: value }));
   };
+
+  useEffect(() => {
+    if (!open || !lojaAtualId || (orderType !== 'Delivery' && orderType !== 'Retirada')) {
+      setCustomerMatch(null);
+      setCustomerLookupPhone('');
+      return;
+    }
+
+    if (!/^\d{10,11}$/.test(customerLookupDigits)) {
+      setCustomerMatch(null);
+      setCustomerLookupPhone('');
+      return;
+    }
+
+    if (customerLookupDigits === customerLookupPhone) return;
+
+    const timer = window.setTimeout(async () => {
+      setCustomerLookupLoading(true);
+
+      const { data, error } = await supabase
+        .from('clientes')
+        .select('id, nome, telefone, rua, numero, bairro, complemento, referencia')
+        .eq('loja_id', lojaAtualId)
+        .eq('telefone', customerLookupDigits)
+        .maybeSingle();
+
+      setCustomerLookupLoading(false);
+      setCustomerLookupPhone(customerLookupDigits);
+
+      if (error) {
+        console.error('Erro ao buscar cliente:', error);
+        return;
+      }
+
+      setCustomerMatch(data ?? null);
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [customerLookupDigits, customerLookupPhone, lojaAtualId, open, orderType]);
+
+  const customerAddressText = useCallback((customer: QuickCustomer) => {
+    return [
+      `${customer.rua || ''}${customer.numero ? `, ${customer.numero}` : ''}`.trim(),
+      customer.bairro,
+      customer.complemento,
+      customer.referencia ? `Ref: ${customer.referencia}` : '',
+    ]
+      .filter(Boolean)
+      .join(' - ');
+  }, []);
+
+  const applyCustomerToOrder = useCallback(
+    (customer: QuickCustomer) => {
+      setCustomerName(customer.nome || '');
+
+      if (orderType === 'Delivery') {
+        setDeliveryData((prev) => ({
+          ...prev,
+          whatsapp: customer.telefone || prev.whatsapp,
+          rua: customer.rua || '',
+          numero: customer.numero || '',
+          bairro: customer.bairro || '',
+          complemento: customer.complemento || '',
+          referencia: customer.referencia || '',
+        }));
+      }
+
+      if (orderType === 'Retirada') {
+        setPickupPhone(customer.telefone || '');
+      }
+
+      setCustomerMatch(null);
+      toast.success('Cadastro do cliente aplicado ao pedido.');
+    },
+    [orderType]
+  );
+
+  const saveQuickCustomer = useCallback(
+    async (resolvedOrderType: 'Delivery' | 'Retirada') => {
+      if (!lojaAtualId) return;
+
+      const phone = resolvedOrderType === 'Delivery' ? deliveryWhatsappDigits : pickupPhoneDigits;
+      if (!/^\d{10,11}$/.test(phone) || !customerName.trim()) return;
+
+      const payload = {
+        loja_id: lojaAtualId,
+        nome: customerName.trim(),
+        telefone: phone,
+        rua: resolvedOrderType === 'Delivery' ? deliveryData.rua.trim() || null : null,
+        numero: resolvedOrderType === 'Delivery' ? deliveryData.numero.trim() || null : null,
+        bairro: resolvedOrderType === 'Delivery' ? deliveryData.bairro.trim() || null : null,
+        complemento: resolvedOrderType === 'Delivery' ? deliveryData.complemento.trim() || null : null,
+        referencia: resolvedOrderType === 'Delivery' ? deliveryData.referencia.trim() || null : null,
+        origem: resolvedOrderType === 'Delivery' ? 'delivery' : 'retirada',
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from('clientes')
+        .upsert([payload], { onConflict: 'loja_id,telefone' });
+
+      if (error) {
+        console.error('Erro ao salvar cliente rápido:', error);
+        toast.error('Pedido salvo, mas não foi possível atualizar o cadastro do cliente.');
+      }
+    },
+    [customerName, deliveryData, deliveryWhatsappDigits, lojaAtualId, pickupPhoneDigits]
+  );
 
   const updateQty = (productId: string | number, delta: number) => {
     const safeId = String(productId);
@@ -485,6 +621,13 @@ export function NewOrderModal({
       }
     }
 
+    if (resolvedOrderType === 'Retirada') {
+      if (!/^\d{10,11}$/.test(pickupPhoneDigits)) {
+        toast.error('Informe o WhatsApp do cliente da retirada com DDD.');
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
@@ -493,6 +636,8 @@ export function NewOrderModal({
         (isForcedPickup ? 'Retirada' : isForcedDelivery ? 'Delivery' : selectedMesa ? `Mesa ${selectedMesa.numero}` : mesaNumero ? `Mesa ${mesaNumero}` : 'Pedido');
 
       const finalNotes = `[${resolvedOrderType.toUpperCase()}] ${notes}`.trim();
+      const deliveryPaymentMethod = deliveryData.formaPagamento as PaymentMethod | '';
+      const deliveryPaymentMethodOrNull: PaymentMethod | null = deliveryPaymentMethod || null;
       const deliveryMeta = resolvedOrderType === 'Delivery'
         ? {
             whatsapp: deliveryWhatsappDigits,
@@ -504,7 +649,7 @@ export function NewOrderModal({
               referencia: deliveryData.referencia.trim(),
             },
             tempoEstimado: deliveryData.tempoEstimado.trim(),
-            formaPagamento: deliveryData.statusPagamento === 'a_cobrar' ? deliveryData.formaPagamento : '',
+            formaPagamento: deliveryData.statusPagamento === 'a_cobrar' ? deliveryPaymentMethod : '',
             trocoPara: deliveryData.trocoPara ? Number(String(deliveryData.trocoPara).replace(',', '.')) : null,
           }
         : null;
@@ -512,8 +657,16 @@ export function NewOrderModal({
       if (appendOrderId) {
         await appendItemsToOrder(appendOrderId, cartItems, finalNotes);
       } else if (editOrderId) {
+        if (resolvedOrderType === 'Delivery' || resolvedOrderType === 'Retirada') {
+          await saveQuickCustomer(resolvedOrderType);
+        }
+
         await updateOrder(editOrderId, safeCustomerName, cartItems, finalNotes);
       } else {
+        if (resolvedOrderType === 'Delivery' || resolvedOrderType === 'Retirada') {
+          await saveQuickCustomer(resolvedOrderType);
+        }
+
         await addOrder(
           safeCustomerName,
           cartItems,
@@ -528,11 +681,15 @@ export function NewOrderModal({
                 statusEntrega: 'pendente',
                 metadataDelivery: deliveryMeta,
                 paid: deliveryData.statusPagamento === 'pago',
-                paymentMethod: deliveryData.statusPagamento === 'a_cobrar' ? deliveryData.formaPagamento : null,
+                paymentMethod: deliveryData.statusPagamento === 'a_cobrar' ? deliveryPaymentMethodOrNull : null,
                 amountReceived: deliveryData.statusPagamento === 'pago' ? totalComEntrega : null,
                 changeGiven: 0,
+                clienteTelefone: deliveryWhatsappDigits,
               }
-            : { tipoPedido: resolvedOrderType === 'Retirada' ? 'retirada' : 'local' }
+            : {
+                tipoPedido: resolvedOrderType === 'Retirada' ? 'retirada' : 'local',
+                clienteTelefone: resolvedOrderType === 'Retirada' ? pickupPhoneDigits : null,
+              }
         );
       }
 // =====================================================================
@@ -1005,6 +1162,25 @@ export function NewOrderModal({
                       )}
                     </div>
 
+                    {orderType === 'Retirada' && (
+                      <div>
+                        <label className="text-xs font-bold text-muted-foreground mb-2 block uppercase tracking-wider">
+                          WhatsApp do Cliente
+                        </label>
+                        <input
+                          value={pickupPhone}
+                          onChange={(e) => setPickupPhone(onlyDigits(e.target.value))}
+                          inputMode="numeric"
+                          maxLength={11}
+                          placeholder="DDD + telefone"
+                          className="w-full bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium text-[15px]"
+                        />
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Usado para localizar o cliente depois e preparar aviso de pedido pronto.
+                        </p>
+                      </div>
+                    )}
+
                     <div>
                       <label className="text-xs font-bold text-muted-foreground mb-2 block uppercase tracking-wider">
                         Pesquisar Cardápio
@@ -1022,6 +1198,36 @@ export function NewOrderModal({
                     </div>
                   </div>
 
+                  {(orderType === 'Delivery' || orderType === 'Retirada') && customerMatch && (
+                    <div className="mb-8 rounded-2xl border border-primary/30 bg-primary/10 p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <p className="text-xs font-black uppercase tracking-wider text-primary">
+                            Cliente já cadastrado
+                          </p>
+                          <p className="mt-1 font-black text-foreground">{customerMatch.nome}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {customerAddressText(customerMatch) || 'Sem endereço cadastrado.'}
+                          </p>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => applyCustomerToOrder(customerMatch)}
+                          className="rounded-xl bg-primary px-4 py-3 text-sm font-black text-black"
+                        >
+                          Usar cadastro atual
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {customerLookupLoading && (orderType === 'Delivery' || orderType === 'Retirada') && (
+                    <p className="mb-8 rounded-xl border border-border bg-card p-3 text-sm font-bold text-muted-foreground">
+                      Buscando cadastro do cliente...
+                    </p>
+                  )}
+
                   {orderType === 'Delivery' && (
                     <div className="mb-8 bg-card p-5 sm:p-6 rounded-3xl border border-border/60 shadow-sm">
                       <h3 className="mb-5 flex items-center gap-2 text-sm font-black uppercase tracking-wider text-primary">
@@ -1029,7 +1235,7 @@ export function NewOrderModal({
                       </h3>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <input value={deliveryData.whatsapp} onChange={(e) => updateDeliveryField('whatsapp', e.target.value.replace(/\D/g, ''))} inputMode="numeric" maxLength={11} placeholder="WhatsApp com DDD" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                        <input value={deliveryData.whatsapp} onChange={(e) => updateDeliveryField('whatsapp', onlyDigits(e.target.value))} inputMode="numeric" maxLength={11} placeholder="WhatsApp com DDD" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
                         <input value={deliveryData.tempoEstimado} onChange={(e) => updateDeliveryField('tempoEstimado', e.target.value)} placeholder="Tempo estimado (ex: 40 min)" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
                         <input value={deliveryData.rua} onChange={(e) => updateDeliveryField('rua', e.target.value)} placeholder="Rua" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
                         <input value={deliveryData.numero} onChange={(e) => updateDeliveryField('numero', e.target.value)} placeholder="Número" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />

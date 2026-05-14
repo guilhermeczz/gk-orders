@@ -39,6 +39,20 @@ function fromInputDate(value: string) {
   return new Date(year, month - 1, day, 12, 0, 0);
 }
 
+const exportCheckboxClassName =
+  'h-6 w-6 shrink-0 cursor-pointer rounded-md border-2 border-[hsl(var(--primary)/0.85)] bg-background accent-[hsl(var(--primary))] shadow-[0_0_0_3px_hsl(var(--primary)/0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.45)]';
+
+const exportModalCardClassName =
+  'w-full max-w-md overflow-hidden rounded-2xl border border-[hsl(var(--primary)/0.22)] bg-[#111111] shadow-[0_24px_80px_rgba(0,0,0,0.85)]';
+
+function exportOptionClassName(checked: boolean) {
+  return `flex cursor-pointer items-center gap-3 rounded-xl border p-3 font-bold transition-colors ${
+    checked
+      ? 'border-[hsl(var(--primary)/0.85)] bg-[hsl(var(--primary)/0.12)] text-foreground shadow-[0_0_0_1px_hsl(var(--primary)/0.18)]'
+      : 'border-border bg-background text-muted-foreground hover:border-[hsl(var(--primary)/0.45)] hover:text-foreground'
+  }`;
+}
+
 function money(v: number) {
   return Number(v || 0).toLocaleString('pt-BR', {
     minimumFractionDigits: 2,
@@ -645,19 +659,20 @@ export function ReportsPage() {
       </div>
 
       {exportModalOpen && (
-        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/80 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl">
-            <div className="mb-5 flex items-center justify-between">
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/90 p-4">
+          <div className={exportModalCardClassName}>
+            <div className="flex items-center justify-between border-b border-border bg-[#171717] px-5 py-4">
               <h2 className="text-lg font-black text-foreground">Exportar Relatório</h2>
               <button type="button" onClick={() => setExportModalOpen(false)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted">
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="space-y-3">
-              <label className="flex items-center gap-3 rounded-xl border border-border bg-background p-3 font-bold">
+            <div className="space-y-3 bg-[#0b0b0b] p-5">
+              <label className={exportOptionClassName(exportTypes.delivery && exportTypes.retirada && exportTypes.local)}>
                 <input
                   type="checkbox"
+                  className={exportCheckboxClassName}
                   checked={exportTypes.delivery && exportTypes.retirada && exportTypes.local}
                   onChange={(e) => setExportTypes({ delivery: e.target.checked, retirada: e.target.checked, local: e.target.checked })}
                 />
@@ -668,20 +683,20 @@ export function ReportsPage() {
                 ['retirada', 'Retirada'],
                 ['local', 'Local'],
               ].map(([key, label]) => (
-                <label key={key} className="flex items-center gap-3 rounded-xl border border-border bg-background p-3 font-bold">
+                <label key={key} className={exportOptionClassName(exportTypes[key as keyof typeof exportTypes])}>
                   <input
                     type="checkbox"
+                    className={exportCheckboxClassName}
                     checked={exportTypes[key as keyof typeof exportTypes]}
                     onChange={(e) => setExportTypes((prev) => ({ ...prev, [key]: e.target.checked }))}
                   />
                   {label}
                 </label>
               ))}
+              <button type="button" onClick={handleDownloadPDF} className="mt-2 w-full rounded-xl bg-primary px-4 py-3 font-black text-black">
+                Gerar PDF
+              </button>
             </div>
-
-            <button type="button" onClick={handleDownloadPDF} className="mt-5 w-full rounded-xl bg-primary px-4 py-3 font-black text-black">
-              Gerar PDF
-            </button>
           </div>
         </div>
       )}
