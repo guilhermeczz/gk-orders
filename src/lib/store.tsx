@@ -26,6 +26,7 @@ import {
   getCurrentStoreId,
   subscribeToCurrentStoreChange,
 } from './current-store';
+import { getOrderLockedMessage, isOrderLockedForChanges } from './order-lock';
 import { toast } from 'sonner';
 
 interface CashPaymentMeta {
@@ -123,7 +124,8 @@ interface AppState {
     orderId: string,
     customerName: string,
     items: OrderItem[],
-    notes?: string
+    notes?: string,
+    extraData?: OrderExtraData
   ) => Promise<void>;
 
   appendItemsToOrder: (
@@ -638,9 +640,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
 
   const updateOrder = useCallback(
-    async (orderId: string, customerName: string, items: OrderItem[], notes: string = '') => {
+    async (orderId: string, customerName: string, items: OrderItem[], notes: string = '', extraData?: OrderExtraData) => {
       if (!lojaAtualId) return;
-      const total = getItemsTotal(items);
+      const targetOrder = orders.find((order) => String(order.id) === String(orderId));
+
+      if (isOrderLockedForChanges(targetOrder)) {
+        const message = getOrderLockedMessage(targetOrder);
+        toast.error(message);
+        throw new Error(message);
+      }
+
+      const total = getItemsTotal(items) + Number(extraData?.taxaEntrega || 0);
 
       const { error: orderError } = await supabase
         .from('pedidos')
@@ -648,6 +658,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
           cliente_nome: customerName,
           valor_total: total,
           observacao: notes,
+          ...(extraData
+            ? {
+                tipo_pedido: extraData.tipoPedido,
+                taxa_entrega: Number(extraData.taxaEntrega || 0),
+                status_pagamento: extraData.statusPagamento ?? null,
+                metadata_delivery: extraData.metadataDelivery ?? null,
+                cliente_telefone: extraData.clienteTelefone ?? null,
+                ...(extraData.paid !== undefined
+                  ? {
+                      status: extraData.paid ? 'paid' : 'new',
+                      pago: extraData.paid,
+                      forma_pagamento: extraData.paymentMethod ?? null,
+                      paid_at: extraData.paid ? new Date().toISOString() : null,
+                      amount_received: extraData.amountReceived ?? null,
+                      change_given: extraData.changeGiven ?? null,
+                    }
+                  : {}),
+              }
+            : {}),
         })
         .eq('loja_id', lojaAtualId)
         .eq('id', orderId);
@@ -682,7 +711,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       await fetchData();
       toast.success('Pedido atualizado!');
     },
-    [fetchData, lojaAtualId]
+    [fetchData, orders, lojaAtualId]
   );
 
   const appendItemsToOrder = useCallback(
@@ -690,6 +719,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (!lojaAtualId) return;
       const order = orders.find((o) => String(o.id) === String(orderId));
       if (!order) throw new Error('Pedido não encontrado.');
+
+      if (isOrderLockedForChanges(order)) {
+        const message = getOrderLockedMessage(order);
+        toast.error(message);
+        throw new Error(message);
+      }
 
       const nextBatchNumber =
         Array.isArray(order.itemBatches) && order.itemBatches.length > 0
@@ -754,6 +789,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        if (isOrderLockedForChanges(targetOrder)) {
+          toast.error(getOrderLockedMessage(targetOrder));
+          return;
+        }
+
         const { error: updateError } = await supabase
           .from('pedido_itens')
           .update({
@@ -800,6 +840,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         if (!targetOrder) {
           toast.error('Item não encontrado.');
+          return;
+        }
+
+        if (isOrderLockedForChanges(targetOrder)) {
+          toast.error(getOrderLockedMessage(targetOrder));
           return;
         }
 
@@ -891,6 +936,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     async (orderId: string) => {
       if (!lojaAtualId) return;
       const targetOrder = orders.find((order) => String(order.id) === String(orderId));
+
+      if (isOrderLockedForChanges(targetOrder)) {
+        const message = getOrderLockedMessage(targetOrder);
+        toast.error(message);
+        throw new Error(message);
+      }
 
       const { error } = await supabase
         .from('pedidos')

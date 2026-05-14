@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useAppStore } from '@/lib/store';
-import type { OrderItem, OrderItemAddition, Product, Mesa, PaymentMethod } from '@/lib/types';
+import type { DeliveryPaymentStatus, OrderItem, OrderItemAddition, Product, Mesa, PaymentMethod, DeliveryMetadata } from '@/lib/types';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import {
@@ -15,6 +15,7 @@ import {
   Info,
   AlertTriangle,
   Truck,
+  Star,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { onlyDigits } from '@/lib/whatsapp';
@@ -50,6 +51,9 @@ interface NewOrderModalProps {
   initialCart?: Record<string, number>;
   initialCartAdditions?: Record<string, Record<string, number>>;
   initialNotes?: string;
+  initialDeliveryMetadata?: DeliveryMetadata | null;
+  initialDeliveryStatusPagamento?: DeliveryPaymentStatus;
+  initialDeliveryTaxaEntrega?: number;
   appendBaseNotes?: string;
   mesaId?: string | null;
   mesaNumero?: number | null;
@@ -68,6 +72,59 @@ const categoryDisplayOrder = [
   'Bebidas',
 ];
 
+const normalizeCategoryText = (value: string) => {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+};
+
+const isSpecialCategoryName = (categoryName: string) => {
+  return normalizeCategoryText(categoryName).includes('especial do mes');
+};
+
+const getCategoryPriority = (categoryName: string) => {
+  const normalized = normalizeCategoryText(categoryName);
+
+  if (isSpecialCategoryName(categoryName)) return 0;
+  if (normalized.includes('entrada') || normalized.includes('porcao') || normalized.includes('petisco')) return 1;
+  if (
+    normalized.includes('prato') ||
+    normalized.includes('principal') ||
+    normalized.includes('lanche') ||
+    normalized.includes('hamburg') ||
+    normalized.includes('hot dog') ||
+    normalized.includes('pizza') ||
+    normalized.includes('massa')
+  ) return 2;
+  if (
+    normalized.includes('bebida') ||
+    normalized.includes('refrigerante') ||
+    normalized.includes('agua') ||
+    normalized.includes('suco') ||
+    normalized.includes('cerveja') ||
+    normalized.includes('drink')
+  ) return 3;
+  if (normalized.includes('sobremesa') || normalized.includes('doce')) return 4;
+
+  return 2.5;
+};
+
+const specialProductLabels = ['Entrada do mes', 'Prato do mes', 'Bebida do mes'];
+
+const getSpecialProductDisplay = (productName: string) => {
+  const rawName = String(productName || '');
+  const label = specialProductLabels.find((item) => rawName.startsWith(`${item}:`));
+
+  if (!label) return { label: '', name: rawName };
+
+  return {
+    label,
+    name: rawName.slice(`${label}:`.length).trim() || rawName,
+  };
+};
+
 const emptyDeliveryData = {
   whatsapp: '',
   rua: '',
@@ -77,6 +134,7 @@ const emptyDeliveryData = {
   referencia: '',
   taxaEntrega: '',
   tempoEstimado: '',
+  observacao: '',
   statusPagamento: 'a_cobrar' as 'pago' | 'a_cobrar',
   formaPagamento: 'dinheiro' as 'dinheiro' | 'pix' | 'credito' | 'debito',
   trocoPara: '',
@@ -94,6 +152,9 @@ export function NewOrderModal({
   initialCart,
   initialCartAdditions,
   initialNotes,
+  initialDeliveryMetadata,
+  initialDeliveryStatusPagamento,
+  initialDeliveryTaxaEntrega,
   appendBaseNotes,
   mesaId,
   mesaNumero,
@@ -116,6 +177,19 @@ export function NewOrderModal({
   const [deliveryData, setDeliveryData] = useState(emptyDeliveryData);
   const [pickupPhone, setPickupPhone] = useState('');
   const [customerMatch, setCustomerMatch] = useState<QuickCustomer | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<QuickCustomer | null>(null);
+  const [customerSuggestions, setCustomerSuggestions] = useState<QuickCustomer[]>([]);
+  const [addressFixCustomer, setAddressFixCustomer] = useState<QuickCustomer | null>(null);
+  const [addressFixForm, setAddressFixForm] = useState({
+    nome: '',
+    telefone: '',
+    rua: '',
+    numero: '',
+    bairro: '',
+    complemento: '',
+    referencia: '',
+  });
+  const [addressFixSaving, setAddressFixSaving] = useState(false);
   const [customerLookupPhone, setCustomerLookupPhone] = useState('');
   const [customerLookupLoading, setCustomerLookupLoading] = useState(false);
 
@@ -254,10 +328,25 @@ export function NewOrderModal({
     setMesaDropdownAberto(false);
     setDeliveryData({
       ...emptyDeliveryData,
-      whatsapp: parsedType === 'Delivery' ? onlyDigits(initialCustomerPhone || '') : '',
+      whatsapp: parsedType === 'Delivery' ? onlyDigits(initialDeliveryMetadata?.whatsapp || initialCustomerPhone || '') : '',
+      rua: parsedType === 'Delivery' ? initialDeliveryMetadata?.endereco?.rua || '' : '',
+      numero: parsedType === 'Delivery' ? initialDeliveryMetadata?.endereco?.numero || '' : '',
+      bairro: parsedType === 'Delivery' ? initialDeliveryMetadata?.endereco?.bairro || '' : '',
+      complemento: parsedType === 'Delivery' ? initialDeliveryMetadata?.endereco?.complemento || '' : '',
+      referencia: parsedType === 'Delivery' ? initialDeliveryMetadata?.endereco?.referencia || '' : '',
+      taxaEntrega: parsedType === 'Delivery' && initialDeliveryTaxaEntrega ? String(initialDeliveryTaxaEntrega) : '',
+      tempoEstimado: parsedType === 'Delivery' ? initialDeliveryMetadata?.tempoEstimado || '' : '',
+      observacao: parsedType === 'Delivery' ? initialDeliveryMetadata?.observacao || '' : '',
+      statusPagamento: parsedType === 'Delivery' ? initialDeliveryStatusPagamento || emptyDeliveryData.statusPagamento : emptyDeliveryData.statusPagamento,
+      formaPagamento: parsedType === 'Delivery' ? (initialDeliveryMetadata?.formaPagamento || emptyDeliveryData.formaPagamento) as any : emptyDeliveryData.formaPagamento,
+      trocoPara: parsedType === 'Delivery' && initialDeliveryMetadata?.trocoPara ? String(initialDeliveryMetadata.trocoPara) : '',
     });
     setPickupPhone(parsedType === 'Retirada' ? onlyDigits(initialCustomerPhone || '') : '');
     setCustomerMatch(null);
+    setSelectedCustomer(null);
+    setCustomerSuggestions([]);
+    setAddressFixCustomer(null);
+    setAddressFixSaving(false);
     setCustomerLookupPhone('');
     setCustomerLookupLoading(false);
     setFieldErrors({});
@@ -276,6 +365,9 @@ export function NewOrderModal({
     initialCart,
     initialCartAdditions,
     initialNotes,
+    initialDeliveryMetadata,
+    initialDeliveryStatusPagamento,
+    initialDeliveryTaxaEntrega,
     appendBaseNotes,
     mesaNumero,
     mesaId,
@@ -333,15 +425,13 @@ export function NewOrderModal({
       });
     });
 
-    const orderedCategoryNames = categoryDisplayOrder.filter(
-      (categoryName) => grouped[categoryName] && grouped[categoryName].length > 0
-    );
+    const orderedCategoryNames = Object.keys(grouped).sort((a, b) => {
+      const priorityDiff = getCategoryPriority(a) - getCategoryPriority(b);
+      if (priorityDiff !== 0) return priorityDiff;
+      return a.localeCompare(b, 'pt-BR');
+    });
 
-    const extraCategoryNames = Object.keys(grouped)
-      .filter((categoryName) => !categoryDisplayOrder.includes(categoryName))
-      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
-
-    return [...orderedCategoryNames, ...extraCategoryNames].map(
+    return orderedCategoryNames.map(
       (categoryName) => [categoryName, grouped[categoryName]] as const
     );
   }, [filteredProducts, isAdditionalProduct, getCategoryNameByProductId]);
@@ -397,6 +487,15 @@ export function NewOrderModal({
   const pickupPhoneDigits = onlyDigits(pickupPhone);
   const customerLookupDigits = orderType === 'Delivery' ? deliveryWhatsappDigits : orderType === 'Retirada' ? pickupPhoneDigits : '';
 
+  useEffect(() => {
+    if (!selectedCustomer) return;
+
+    const activePhone = orderType === 'Delivery' ? deliveryWhatsappDigits : pickupPhoneDigits;
+    if (activePhone && selectedCustomer.telefone !== activePhone) {
+      setSelectedCustomer(null);
+    }
+  }, [deliveryWhatsappDigits, orderType, pickupPhoneDigits, selectedCustomer]);
+
   const updateDeliveryField = (field: keyof typeof emptyDeliveryData, value: string) => {
     setDeliveryData((prev) => ({ ...prev, [field]: value }));
   };
@@ -429,12 +528,14 @@ export function NewOrderModal({
   useEffect(() => {
     if (!open || !lojaAtualId || (orderType !== 'Delivery' && orderType !== 'Retirada')) {
       setCustomerMatch(null);
+      setCustomerSuggestions([]);
       setCustomerLookupPhone('');
       return;
     }
 
-    if (!/^\d{10,11}$/.test(customerLookupDigits)) {
+    if (customerLookupDigits.length < 6) {
       setCustomerMatch(null);
+      setCustomerSuggestions([]);
       setCustomerLookupPhone('');
       return;
     }
@@ -448,8 +549,9 @@ export function NewOrderModal({
         .from('clientes')
         .select('id, nome, telefone, rua, numero, bairro, complemento, referencia')
         .eq('loja_id', lojaAtualId)
-        .eq('telefone', customerLookupDigits)
-        .maybeSingle();
+        .like('telefone', `${customerLookupDigits}%`)
+        .order('updated_at', { ascending: false })
+        .limit(5);
 
       setCustomerLookupLoading(false);
       setCustomerLookupPhone(customerLookupDigits);
@@ -459,7 +561,11 @@ export function NewOrderModal({
         return;
       }
 
-      setCustomerMatch(data ?? null);
+      const matches = data ?? [];
+      const exactMatch = matches.find((customer) => customer.telefone === customerLookupDigits) ?? null;
+
+      setCustomerMatch(/^\d{10,11}$/.test(customerLookupDigits) ? exactMatch : null);
+      setCustomerSuggestions(matches);
     }, 350);
 
     return () => window.clearTimeout(timer);
@@ -475,6 +581,99 @@ export function NewOrderModal({
       .filter(Boolean)
       .join(' - ');
   }, []);
+
+  const customerHasIncompleteDeliveryAddress = useCallback((customer: QuickCustomer | null) => {
+    if (!customer) return false;
+    return !customer.rua?.trim() || !customer.numero?.trim() || !customer.bairro?.trim();
+  }, []);
+
+  const openCustomerAddressFix = useCallback(
+    (customer: QuickCustomer) => {
+      setAddressFixCustomer(customer);
+      setAddressFixForm({
+        nome: customer.nome || customerName,
+        telefone: customer.telefone || deliveryWhatsappDigits,
+        rua: customer.rua || deliveryData.rua || '',
+        numero: customer.numero || deliveryData.numero || '',
+        bairro: customer.bairro || deliveryData.bairro || '',
+        complemento: customer.complemento || deliveryData.complemento || '',
+        referencia: customer.referencia || deliveryData.referencia || '',
+      });
+    },
+    [customerName, deliveryData, deliveryWhatsappDigits]
+  );
+
+  const saveAddressFix = useCallback(async () => {
+    if (!lojaAtualId || !addressFixCustomer) return;
+
+    const phone = onlyDigits(addressFixForm.telefone || addressFixCustomer.telefone || deliveryWhatsappDigits);
+
+    if (!addressFixForm.nome.trim()) {
+      toast.error('Informe o nome do cliente.');
+      return;
+    }
+
+    if (!/^\d{10,11}$/.test(phone)) {
+      toast.error('Informe um WhatsApp válido com DDD.');
+      return;
+    }
+
+    if (!addressFixForm.rua.trim() || !addressFixForm.numero.trim() || !addressFixForm.bairro.trim()) {
+      toast.error('Informe rua, número e bairro.');
+      return;
+    }
+
+    setAddressFixSaving(true);
+
+    const payload = {
+      loja_id: lojaAtualId,
+      nome: addressFixForm.nome.trim(),
+      telefone: phone,
+      rua: addressFixForm.rua.trim(),
+      numero: addressFixForm.numero.trim(),
+      bairro: addressFixForm.bairro.trim(),
+      complemento: addressFixForm.complemento.trim() || null,
+      referencia: addressFixForm.referencia.trim() || null,
+      origem: 'delivery',
+      updated_at: new Date().toISOString(),
+    };
+
+    const query = addressFixCustomer.id
+      ? supabase.from('clientes').update(payload).eq('loja_id', lojaAtualId).eq('id', addressFixCustomer.id)
+      : supabase.from('clientes').upsert([payload], { onConflict: 'loja_id,telefone' });
+
+    const { error } = await query;
+    setAddressFixSaving(false);
+
+    if (error) {
+      console.error(error);
+      toast.error('Não foi possível corrigir o cadastro.');
+      return;
+    }
+
+    const correctedCustomer = {
+      ...addressFixCustomer,
+      ...payload,
+      id: addressFixCustomer.id,
+    };
+
+    setCustomerName(correctedCustomer.nome);
+    setDeliveryData((prev) => ({
+      ...prev,
+      whatsapp: phone,
+      rua: correctedCustomer.rua || '',
+      numero: correctedCustomer.numero || '',
+      bairro: correctedCustomer.bairro || '',
+      complemento: correctedCustomer.complemento || '',
+      referencia: correctedCustomer.referencia || '',
+    }));
+    setSelectedCustomer(correctedCustomer);
+    setCustomerSuggestions((prev) =>
+      prev.map((customer) => (customer.id === correctedCustomer.id ? correctedCustomer : customer))
+    );
+    setAddressFixCustomer(null);
+    toast.success('Endereço corrigido e aplicado ao delivery.');
+  }, [addressFixCustomer, addressFixForm, deliveryWhatsappDigits, lojaAtualId]);
 
   const applyCustomerToOrder = useCallback(
     (customer: QuickCustomer) => {
@@ -496,7 +695,9 @@ export function NewOrderModal({
         setPickupPhone(customer.telefone || '');
       }
 
+      setSelectedCustomer(customer);
       setCustomerMatch(null);
+      setCustomerSuggestions([]);
       toast.success('Cadastro do cliente aplicado ao pedido.');
     },
     [orderType]
@@ -728,6 +929,7 @@ export function NewOrderModal({
               referencia: deliveryData.referencia.trim(),
             },
             tempoEstimado: deliveryData.tempoEstimado.trim(),
+            observacao: deliveryData.observacao.trim(),
             formaPagamento: deliveryData.statusPagamento === 'a_cobrar' ? deliveryPaymentMethod : '',
             trocoPara: deliveryData.trocoPara ? Number(String(deliveryData.trocoPara).replace(',', '.')) : null,
           }
@@ -740,7 +942,25 @@ export function NewOrderModal({
           await saveQuickCustomer(resolvedOrderType);
         }
 
-        await updateOrder(editOrderId, safeCustomerName, cartItems, finalNotes);
+        await updateOrder(
+          editOrderId,
+          safeCustomerName,
+          cartItems,
+          finalNotes,
+          resolvedOrderType === 'Delivery'
+            ? {
+                tipoPedido: 'delivery',
+                taxaEntrega: deliveryFee,
+                statusPagamento: deliveryData.statusPagamento,
+                metadataDelivery: deliveryMeta,
+                clienteTelefone: deliveryWhatsappDigits,
+                paid: deliveryData.statusPagamento === 'pago',
+                paymentMethod: deliveryData.statusPagamento === 'a_cobrar' ? deliveryPaymentMethodOrNull : null,
+                amountReceived: deliveryData.statusPagamento === 'pago' ? totalComEntrega : null,
+                changeGiven: 0,
+              }
+            : undefined
+        );
       } else {
         if (resolvedOrderType === 'Delivery' || resolvedOrderType === 'Retirada') {
           await saveQuickCustomer(resolvedOrderType);
@@ -851,6 +1071,7 @@ export function NewOrderModal({
               telefone: deliveryMeta.whatsapp,
               endereco: enderecoFormatado,
               tempoEstimado: deliveryMeta.tempoEstimado,
+              observacaoDelivery: deliveryMeta.observacao,
               financeiro,
               taxaEntrega: deliveryFee,
               totalGeral: totalComEntrega,
@@ -1015,6 +1236,7 @@ export function NewOrderModal({
                       {deliveryData.statusPagamento === 'pago' ? 'JÁ PAGO' : `A COBRAR - ${deliveryData.formaPagamento.toUpperCase()}`}
                     </p>
                     {deliveryData.tempoEstimado && <p><span className="font-bold">Tempo:</span> {deliveryData.tempoEstimado}</p>}
+                    {deliveryData.observacao && <p><span className="font-bold">Obs. delivery:</span> {deliveryData.observacao}</p>}
                   </div>
                 )}
               </div>
@@ -1301,6 +1523,58 @@ export function NewOrderModal({
                     </div>
                   )}
 
+                  {orderType === 'Delivery' &&
+                    customerSuggestions.length > 0 &&
+                    !customerMatch &&
+                    deliveryWhatsappDigits.length >= 6 && (
+                      <div className="mb-8 rounded-2xl border border-border bg-card p-4">
+                        <p className="mb-3 text-xs font-black uppercase tracking-wider text-primary">
+                          Clientes encontrados por WhatsApp
+                        </p>
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                          {customerSuggestions.map((customer) => (
+                            <button
+                              key={customer.id}
+                              type="button"
+                              onClick={() => applyCustomerToOrder(customer)}
+                              className="rounded-xl border border-border bg-background p-3 text-left transition-all hover:border-primary"
+                            >
+                              <p className="font-black text-foreground">{customer.nome}</p>
+                              <p className="text-sm font-bold text-primary">{customer.telefone}</p>
+                              <p className="mt-1 line-clamp-1 text-xs font-medium text-muted-foreground">
+                                {customerAddressText(customer) || 'Endereço incompleto'}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                  {orderType === 'Delivery' &&
+                    selectedCustomer &&
+                    customerHasIncompleteDeliveryAddress(selectedCustomer) && (
+                      <div className="mb-8 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+                        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                          <div>
+                            <p className="text-xs font-black uppercase tracking-wider text-amber-400">
+                              Endereço incompleto
+                            </p>
+                            <p className="mt-1 text-sm font-bold text-foreground">
+                              Este cliente já existe, mas ainda não tem rua, número e bairro completos.
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => openCustomerAddressFix(selectedCustomer)}
+                            className="rounded-xl bg-amber-500 px-4 py-3 text-sm font-black text-black"
+                          >
+                            Corrigir cadastro
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                   {customerLookupLoading && (orderType === 'Delivery' || orderType === 'Retirada') && (
                     <p className="mb-8 rounded-xl border border-border bg-card p-3 text-sm font-bold text-muted-foreground">
                       Buscando cadastro do cliente...
@@ -1321,6 +1595,12 @@ export function NewOrderModal({
                         <input value={deliveryData.bairro} onChange={(e) => updateDeliveryField('bairro', e.target.value)} placeholder="Bairro" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
                         <input value={deliveryData.complemento} onChange={(e) => updateDeliveryField('complemento', e.target.value)} placeholder="Complemento" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
                         <input value={deliveryData.referencia} onChange={(e) => updateDeliveryField('referencia', e.target.value)} placeholder="Ponto de referência" className="md:col-span-2 bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
+                        <textarea
+                          value={deliveryData.observacao}
+                          onChange={(e) => updateDeliveryField('observacao', e.target.value)}
+                          placeholder="Observação do delivery (ex: deixar na portaria, chamar no interfone, sem contato)"
+                          className="md:col-span-2 min-h-[96px] resize-none bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium"
+                        />
                         <input value={deliveryData.taxaEntrega} onChange={(e) => updateDeliveryField('taxaEntrega', e.target.value)} type="number" min="0" step="0.01" placeholder="Taxa de entrega (R$)" className="bg-white text-black placeholder:text-gray-400 border border-border/60 rounded-2xl px-5 py-4 outline-none focus:border-primary focus:ring-4 focus:ring-primary/10 font-medium" />
 
                         <div className="flex rounded-2xl border border-border/60 bg-background p-1">
@@ -1357,30 +1637,48 @@ export function NewOrderModal({
                   )}
 
                   <div className="space-y-8">
-                    {groupedProducts.map(([categoryName, prods]) => (
+                    {groupedProducts.map(([categoryName, prods]) => {
+                      const isSpecialCategory = isSpecialCategoryName(categoryName);
+
+                      return (
                       <div key={categoryName} className="space-y-4">
                         <div className="flex items-center gap-4 py-2">
-                          <div className="h-px flex-1 bg-gradient-to-r from-transparent to-border/80" />
-                          <h3 className="font-bold text-lg text-primary px-4 py-1.5 bg-primary/5 border border-primary/20 rounded-full tracking-tight shadow-sm">
-                            {categoryName}
+                          <div className={`h-px flex-1 bg-gradient-to-r from-transparent ${isSpecialCategory ? 'to-amber-400/70' : 'to-border/80'}`} />
+                          <h3 className={`inline-flex items-center gap-2 font-bold text-lg px-4 py-1.5 border rounded-full tracking-tight shadow-sm ${
+                            isSpecialCategory
+                              ? 'bg-amber-500/10 border-amber-400/40 text-amber-300'
+                              : 'bg-primary/5 border-primary/20 text-primary'
+                          }`}>
+                            {isSpecialCategory && <Star className="h-4 w-4 fill-amber-300 text-amber-300" />}
+                            {isSpecialCategory ? 'Especial do mes' : categoryName}
                           </h3>
-                          <div className="h-px flex-1 bg-gradient-to-l from-transparent to-border/80" />
+                          <div className={`h-px flex-1 bg-gradient-to-l from-transparent ${isSpecialCategory ? 'to-amber-400/70' : 'to-border/80'}`} />
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                           {prods.map((p) => {
                             const safeId = String(p.id);
                             const qty = getProductCartQuantity(safeId);
-                            const pName = p.name;
+                            const specialDisplay = getSpecialProductDisplay(p.name);
+                            const pName = specialDisplay.name;
                             const pPrice = Number(p.price || 0);
                             const additionsCount = getProductAdditionsCount(safeId);
 
                             return (
                               <div
                                 key={safeId}
-                                className="flex justify-between items-center p-4 bg-card border border-border/50 rounded-2xl transition-all duration-300 hover:border-primary/40 hover:shadow-md hover:-translate-y-0.5 group"
+                                className={`flex justify-between items-center p-4 rounded-2xl transition-all duration-300 hover:shadow-md hover:-translate-y-0.5 group ${
+                                  isSpecialCategory
+                                    ? 'bg-amber-500/5 border border-amber-400/30 hover:border-amber-400/60'
+                                    : 'bg-card border border-border/50 hover:border-primary/40'
+                                }`}
                               >
                                 <div className="flex flex-col gap-1 pr-3">
+                                  {isSpecialCategory && specialDisplay.label && (
+                                    <span className="w-fit rounded-md border border-amber-400/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-amber-300">
+                                      {specialDisplay.label}
+                                    </span>
+                                  )}
                                   <span className="font-semibold text-[15px] leading-tight text-foreground group-hover:text-primary transition-colors">
                                     {pName}
                                   </span>
@@ -1429,7 +1727,8 @@ export function NewOrderModal({
                           })}
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   <div className="mt-8 bg-card p-5 sm:p-6 rounded-3xl border border-border/60 shadow-sm">
@@ -1641,6 +1940,117 @@ export function NewOrderModal({
           </div>
         </div>
       )}
+
+      {addressFixCustomer && (
+        <div className="fixed inset-0 z-[1350] flex items-center justify-center bg-black/90 p-4">
+          <div className="w-full max-w-2xl overflow-hidden rounded-3xl border border-gray-800 bg-[#111] text-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-800 bg-card px-5 py-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-wider text-amber-400">
+                  Corrigir cadastro
+                </p>
+                <h3 className="text-lg font-black text-foreground">
+                  Endereço para delivery
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setAddressFixCustomer(null)}
+                className="rounded-xl p-2 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
+              <AddressFixInput
+                label="Nome"
+                value={addressFixForm.nome}
+                onChange={(value) => setAddressFixForm((prev) => ({ ...prev, nome: value }))}
+              />
+              <AddressFixInput
+                label="WhatsApp"
+                value={addressFixForm.telefone}
+                maxLength={11}
+                onChange={(value) => setAddressFixForm((prev) => ({ ...prev, telefone: onlyDigits(value) }))}
+              />
+              <AddressFixInput
+                label="Rua"
+                value={addressFixForm.rua}
+                onChange={(value) => setAddressFixForm((prev) => ({ ...prev, rua: value }))}
+              />
+              <AddressFixInput
+                label="Número"
+                value={addressFixForm.numero}
+                onChange={(value) => setAddressFixForm((prev) => ({ ...prev, numero: value }))}
+              />
+              <AddressFixInput
+                label="Bairro"
+                value={addressFixForm.bairro}
+                onChange={(value) => setAddressFixForm((prev) => ({ ...prev, bairro: value }))}
+              />
+              <AddressFixInput
+                label="Complemento"
+                value={addressFixForm.complemento}
+                onChange={(value) => setAddressFixForm((prev) => ({ ...prev, complemento: value }))}
+              />
+              <div className="md:col-span-2">
+                <AddressFixInput
+                  label="Ponto de referência"
+                  value={addressFixForm.referencia}
+                  onChange={(value) => setAddressFixForm((prev) => ({ ...prev, referencia: value }))}
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3 border-t border-gray-800 bg-card p-5">
+              <button
+                type="button"
+                onClick={() => setAddressFixCustomer(null)}
+                className="rounded-xl border border-border bg-background px-5 py-3 font-bold text-foreground hover:bg-muted"
+              >
+                Cancelar
+              </button>
+
+              <button
+                type="button"
+                onClick={saveAddressFix}
+                disabled={addressFixSaving}
+                className="flex-1 rounded-xl bg-primary px-5 py-3 font-black text-black disabled:opacity-50"
+              >
+                {addressFixSaving ? 'Salvando...' : 'Salvar e voltar ao pedido'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function AddressFixInput({
+  label,
+  value,
+  onChange,
+  maxLength,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  maxLength?: number;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted-foreground">
+        {label}
+      </span>
+      <input
+        value={value}
+        maxLength={maxLength}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full rounded-2xl border border-border/60 bg-white px-5 py-4 font-medium text-black outline-none placeholder:text-gray-400 focus:border-primary focus:ring-4 focus:ring-primary/10"
+      />
+    </label>
   );
 }

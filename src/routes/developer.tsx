@@ -1,6 +1,7 @@
 import { createFileRoute, Navigate } from '@tanstack/react-router';
 import { DeveloperPanel } from '../components/developer/DeveloperPanel';
 import { useAuth } from '@/lib/auth';
+import { isDeveloperUser } from '@/lib/permissions';
 
 export const Route = createFileRoute('/developer')({
   component: DeveloperPage,
@@ -16,10 +17,7 @@ function DeveloperPage() {
 
   // 2ª Barreira: Verificação rigorosa de autorização
   // Agora verificamos também pelo 'perfil', que é a forma mais segura no banco de dados
-  const isDeveloper =
-    String(user?.perfil || '').toLowerCase() === 'desenvolvedor' ||
-    String(user?.username || '').toLowerCase() === 'dev' ||
-    String(user?.name || '').toLowerCase() === 'desenvolvedor';
+  const isDeveloper = isDeveloperUser(user);
 
   if (!isDeveloper) {
     return <Navigate to="/dashboard" />;

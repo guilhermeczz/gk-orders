@@ -162,6 +162,8 @@ export function DeveloperPanel() {
   const [savingUser, setSavingUser] = useState(false);
   const [userForm, setUserForm] = useState<UserFormData>(emptyUserForm);
   const [editingUser, setEditingUser] = useState<LojaUsuario | null>(null);
+  const [deletingUser, setDeletingUser] = useState<LojaUsuario | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
 
   const [deleteStoreModalOpen, setDeleteStoreModalOpen] = useState(false);
   const [deletingLoja, setDeletingLoja] = useState<Loja | null>(null);
@@ -582,15 +584,27 @@ export function DeveloperPanel() {
     finally { setSavingUser(false); }
   };
 
-  const deleteStoreUser = async (usuario: LojaUsuario) => {
-    if (!window.confirm(`Excluir ${usuario.nome}?`)) return;
+  const deleteStoreUser = (usuario: LojaUsuario) => {
+    setDeletingUser(usuario);
+  };
+
+  const confirmDeleteStoreUser = async () => {
+    if (!deletingUser) return;
     try {
-      const { data, error } = await supabase.functions.invoke('delete-operator', { body: { userId: usuario.id } });
-      if (error || data?.error) throw error || new Error(data?.error);
+      setIsDeletingUser(true);
+      const { data, error } = await supabase.functions.invoke('delete-operator', { body: { userId: deletingUser.id } });
+      if (error || data?.error) {
+        toast.error('Erro ao excluir usuário.');
+        setIsDeletingUser(false);
+        return;
+      }
       toast.success('Usuário excluído!');
       if (selectedLojaUsers) await fetchLojaUsers(selectedLojaUsers.id);
+      setIsDeletingUser(false);
+      setDeletingUser(null);
     } catch (error) { toast.error('Erro ao excluir usuário.'); }
   };
+
 
   const toggleStoreUserStatus = async (usuario: LojaUsuario) => {
     if (!selectedLojaUsers) return;
@@ -848,6 +862,46 @@ export function DeveloperPanel() {
       )}
 
       {/* NOVO MODAL: CONFIRMAÇÃO DE EXCLUSÃO DA LOJA */}
+      {deletingUser && (
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-sm overflow-hidden rounded-3xl border border-red-500/20 bg-[#101010] text-white shadow-2xl animate-slide-up">
+            <div className="flex flex-col items-center justify-center p-6 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10 text-red-500">
+                <AlertTriangle className="h-8 w-8" />
+              </div>
+              <h3 className="text-xl font-black">Excluir usuário</h3>
+              <p className="mt-2 text-sm text-gray-400">
+                Tem certeza que deseja excluir <span className="font-bold text-white">{deletingUser.nome}</span>?
+              </p>
+              <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-left">
+                <p className="text-xs font-bold text-red-300">
+                  Esta ação remove o acesso deste usuário à loja.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-white/10 p-5 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setDeletingUser(null)}
+                className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-3 text-sm font-bold text-white hover:bg-white/10"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteStoreUser}
+                disabled={isDeletingUser}
+                className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-red-600 py-3 text-sm font-black text-white hover:bg-red-500 disabled:opacity-60"
+              >
+                {isDeletingUser ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Excluir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {deleteStoreModalOpen && deletingLoja && (
         <div className="fixed inset-0 z-[1100] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm animate-fade-in">
           <div className="w-full max-w-sm overflow-hidden rounded-3xl border border-red-500/20 bg-[#101010] text-white shadow-2xl animate-slide-up">

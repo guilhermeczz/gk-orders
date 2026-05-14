@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from '@tanstack/react-router';
-import { ArrowLeft, Loader2, Pencil, Plus, Search, Trash2, UserRound, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Loader2, Pencil, Plus, Search, Trash2, UserRound, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppHeader } from '@/components/AppHeader';
 import { useAppStore } from '@/lib/store';
@@ -35,15 +35,20 @@ export function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
+  const [customersLoaded, setCustomersLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Customer | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [prefillApplied, setPrefillApplied] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Customer | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchCustomers = useCallback(async () => {
     if (!lojaAtualId) return;
 
     setLoading(true);
+    setCustomersLoaded(false);
     const { data, error } = await supabase
       .from('clientes')
       .select('id, nome, telefone, rua, numero, bairro, complemento, referencia, origem, updated_at')
@@ -58,11 +63,48 @@ export function CustomersPage() {
     }
 
     setLoading(false);
+    setCustomersLoaded(true);
   }, [lojaAtualId]);
 
   useEffect(() => {
     fetchCustomers();
   }, [fetchCustomers]);
+
+  useEffect(() => {
+    if (prefillApplied || loading || !customersLoaded) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const phone = onlyDigits(params.get('editarTelefone') || params.get('telefone') || '');
+    const name = params.get('nome') || '';
+
+    if (!phone && !name) return;
+
+    const existingCustomer = customers.find((customer) => customer.telefone === phone);
+
+    if (existingCustomer) {
+      setEditing(existingCustomer);
+      setForm({
+        nome: existingCustomer.nome || '',
+        telefone: existingCustomer.telefone || '',
+        rua: existingCustomer.rua || '',
+        numero: existingCustomer.numero || '',
+        bairro: existingCustomer.bairro || '',
+        complemento: existingCustomer.complemento || '',
+        referencia: existingCustomer.referencia || '',
+      });
+    } else {
+      setEditing(null);
+      setForm({
+        ...emptyForm,
+        nome: name,
+        telefone: phone,
+      });
+    }
+
+    setSearch(phone || name);
+    setModalOpen(true);
+    setPrefillApplied(true);
+  }, [customers, customersLoaded, loading, prefillApplied]);
 
   const filteredCustomers = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -141,8 +183,8 @@ export function CustomersPage() {
 
   const deleteCustomer = async (customer: Customer) => {
     if (!lojaAtualId) return;
-    if (!confirm(`Excluir o cliente ${customer.nome}?`)) return;
 
+    setDeleting(true);
     const { error } = await supabase
       .from('clientes')
       .delete()
@@ -152,10 +194,13 @@ export function CustomersPage() {
     if (error) {
       console.error(error);
       toast.error('Não foi possível excluir o cliente.');
+      setDeleting(false);
       return;
     }
 
     toast.success('Cliente excluído.');
+    setDeleting(false);
+    setDeleteTarget(null);
     await fetchCustomers();
   };
 
@@ -233,7 +278,7 @@ export function CustomersPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => deleteCustomer(customer)}
+                        onClick={() => setDeleteTarget(customer)}
                         className="rounded-lg border border-border bg-background p-2 text-muted-foreground hover:border-red-500 hover:text-red-500"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -302,6 +347,46 @@ export function CustomersPage() {
                 className="flex-1 rounded-xl bg-primary px-5 py-3 font-black text-black disabled:opacity-50"
               >
                 {saving ? 'Salvando...' : 'Salvar cliente'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[1300] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm overflow-hidden rounded-3xl border border-red-500/20 bg-[#101010] text-white shadow-2xl">
+            <div className="flex flex-col items-center justify-center p-6 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10 text-red-500">
+                <AlertTriangle className="h-8 w-8" />
+              </div>
+              <h3 className="text-xl font-black">Excluir cliente</h3>
+              <p className="mt-2 text-sm text-gray-400">
+                Tem certeza que deseja excluir <span className="font-bold text-white">{deleteTarget.nome}</span>?
+              </p>
+              <div className="mt-4 rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-left">
+                <p className="text-xs font-bold text-red-300">
+                  Esta ação remove o cadastro do cliente e não pode ser desfeita.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 border-t border-white/10 p-5 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="flex-1 rounded-2xl border border-white/10 bg-white/5 py-3 text-sm font-bold text-white hover:bg-white/10"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteCustomer(deleteTarget)}
+                disabled={deleting}
+                className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-red-600 py-3 text-sm font-black text-white hover:bg-red-500 disabled:opacity-60"
+              >
+                {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                Excluir
               </button>
             </div>
           </div>

@@ -14,6 +14,7 @@ export interface DeliveryMetadata {
     referencia?: string;
   };
   tempoEstimado?: string;
+  observacao?: string;
   formaPagamento?: PaymentMethod | '';
   trocoPara?: number | null;
 }

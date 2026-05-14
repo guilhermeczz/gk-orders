@@ -18,6 +18,7 @@ import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import { useAuth } from '@/lib/auth';
 import { useAppStore } from '@/lib/store';
 import { supabase } from '@/lib/supabase';
+import { isDeveloperUser } from '@/lib/permissions';
 import { toast } from 'sonner';
 import logoFull from '@/assets/logo-full.png';
 
@@ -33,9 +34,9 @@ const baseNavItems: NavItem[] = [
   { to: '/dashboard', label: 'Início', icon: Home, allowedRoles: ['admin_loja', 'operador', 'desenvolvedor'] },
   { to: '/delivery', label: 'Delivery', icon: Bike, allowedRoles: ['admin_loja', 'operador', 'desenvolvedor'] },
   { to: '/customers', label: 'Clientes', icon: UserRound, allowedRoles: ['admin_loja', 'operador', 'desenvolvedor'] },
+  { to: '/products', label: 'Produtos', icon: Package, allowedRoles: ['admin_loja', 'operador', 'desenvolvedor'] },
+  { to: '/best-sellers', label: 'Mais Pedidos', icon: Crown, allowedRoles: ['admin_loja', 'operador', 'desenvolvedor'] },
   { to: '/paid-orders', label: 'Pedidos Pagos', icon: CheckCircle2, allowedRoles: ['admin_loja', 'desenvolvedor'] },
-  { to: '/products', label: 'Produtos', icon: Package, allowedRoles: ['admin_loja', 'desenvolvedor'] },
-  { to: '/best-sellers', label: 'Mais Pedidos', icon: Crown, allowedRoles: ['admin_loja', 'desenvolvedor'] },
   { to: '/reports', label: 'Relatórios', icon: BarChart3, allowedRoles: ['admin_loja', 'desenvolvedor'] },
   { to: '/cash-register', label: 'Controle de Caixa', icon: Wallet, allowedRoles: ['admin_loja', 'desenvolvedor'] },
 ];
@@ -58,9 +59,7 @@ export function AppHeader({ onNewOrder }: { onNewOrder?: () => void }) {
   const [storeName, setStoreName] = useState<string>('');
   const [storeLogo, setStoreLogo] = useState<string | null>(null);
 
-  const isDeveloper =
-    String(user?.username || '').toLowerCase() === 'dev' ||
-    String(user?.name || '').toLowerCase() === 'desenvolvedor';
+  const isDeveloper = isDeveloperUser(user);
 
   // Filtra o menu baseado no perfil
   const navItems = useMemo(() => {

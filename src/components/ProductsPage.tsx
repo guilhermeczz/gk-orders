@@ -14,10 +14,15 @@ import {
   Search, 
   ChevronRight, 
   ChevronLeft,
-  Layers
+  Layers,
+  Power,
+  RotateCcw,
+  Star
 } from 'lucide-react';
 import { Link } from '@tanstack/react-router';
 import { AppHeader } from '@/components/AppHeader';
+import { useAuth } from '@/lib/auth';
+import { isDeveloperUser, isStoreAdmin } from '@/lib/permissions';
 
 const normalizeText = (value: string) =>
   String(value || '')
@@ -31,7 +36,39 @@ const isAdditionsCategory = (category: any) => {
   return name.includes('adicional') || name.includes('adicionais') || name.includes('extra');
 };
 
+const SPECIAL_CATEGORY_NAME = 'Especial do mes';
+
+const isSpecialCategory = (category: any) => {
+  const name = normalizeText(category?.name);
+  return name.includes('especial do mes') || name.includes('especial do mês');
+};
+
+const specialSlots = [
+  { key: 'entrada', label: 'Entrada do mes', setor: 'cozinha' },
+  { key: 'prato', label: 'Prato do mes', setor: 'cozinha' },
+  { key: 'bebida', label: 'Bebida do mes', setor: 'bar' },
+] as const;
+
+type SpecialSlotKey = (typeof specialSlots)[number]['key'];
+
+type SpecialFormState = Record<SpecialSlotKey, { name: string; price: string }>;
+
+const emptySpecialForm: SpecialFormState = {
+  entrada: { name: '', price: '' },
+  prato: { name: '', price: '' },
+  bebida: { name: '', price: '' },
+};
+
+const specialProductPrefix = (label: string) => `${label}:`;
+
+const getSpecialProductName = (productName: string, label: string) => {
+  const prefix = specialProductPrefix(label);
+  const rawName = String(productName || '');
+  return rawName.startsWith(prefix) ? rawName.slice(prefix.length).trim() : rawName;
+};
+
 export function ProductsPage() {
+  const { user } = useAuth();
   const {
     products,
     categories,
@@ -44,7 +81,7 @@ export function ProductsPage() {
     lojaAtualId
   } = useAppStore();
 
-  const [activeTab, setActiveTab] = useState<'products' | 'additions' | 'categories'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'additions' | 'categories' | 'inactive' | 'special'>('products');
   const [showProdForm, setShowProdForm] = useState(false);
   const [showCatForm, setShowCatForm] = useState(false);
 
@@ -76,6 +113,9 @@ export function ProductsPage() {
 
   const [deleteProdTarget, setDeleteProdTarget] = useState<any | null>(null);
   const [deleteCatTarget, setDeleteCatTarget] = useState<any | null>(null);
+  const [specialForm, setSpecialForm] = useState<SpecialFormState>(emptySpecialForm);
+  const [savingSpecial, setSavingSpecial] = useState(false);
+  const canManageMenu = isStoreAdmin(user) || isDeveloperUser(user);
 
   const categoriesMap = useMemo(() => {
     const map = new Map<string, any>();
@@ -92,8 +132,12 @@ export function ProductsPage() {
     return categories.find(isAdditionsCategory);
   }, [categories]);
 
+  const specialCategory = useMemo(() => {
+    return categories.find(isSpecialCategory);
+  }, [categories]);
+
   const visibleCategories = useMemo(() => {
-    return categories.filter((category) => !isAdditionsCategory(category));
+    return categories.filter((category) => !isAdditionsCategory(category) && !isSpecialCategory(category));
   }, [categories]);
 
   const checkScroll = useCallback(() => {
@@ -143,6 +187,40 @@ export function ProductsPage() {
     { value: 'caixa', label: 'Caixa' },
   ];
 
+  const specialProductsBySlot = useMemo(() => {
+    const map = new Map<SpecialSlotKey, any>();
+    if (!specialCategory) return map;
+
+    products
+      .filter((product) => String(product.categoryId) === String(specialCategory.id))
+      .forEach((product) => {
+        specialSlots.forEach((slot) => {
+          if (String(product.name || '').startsWith(specialProductPrefix(slot.label))) {
+            map.set(slot.key, product);
+          }
+        });
+      });
+
+    return map;
+  }, [products, specialCategory]);
+
+  useEffect(() => {
+    setSpecialForm({
+      entrada: {
+        name: getSpecialProductName(specialProductsBySlot.get('entrada')?.name || '', 'Entrada do mes'),
+        price: specialProductsBySlot.get('entrada')?.price ? String(specialProductsBySlot.get('entrada')?.price) : '',
+      },
+      prato: {
+        name: getSpecialProductName(specialProductsBySlot.get('prato')?.name || '', 'Prato do mes'),
+        price: specialProductsBySlot.get('prato')?.price ? String(specialProductsBySlot.get('prato')?.price) : '',
+      },
+      bebida: {
+        name: getSpecialProductName(specialProductsBySlot.get('bebida')?.name || '', 'Bebida do mes'),
+        price: specialProductsBySlot.get('bebida')?.price ? String(specialProductsBySlot.get('bebida')?.price) : '',
+      },
+    });
+  }, [specialProductsBySlot]);
+
   const ensureAdditionsCategory = async () => {
     if (additionsCategory) return String(additionsCategory.id);
     if (!lojaAtualId) throw new Error('Loja não identificada.');
@@ -166,7 +244,97 @@ export function ProductsPage() {
     return String(data.id);
   };
 
+  const ensureSpecialCategory = async () => {
+    if (specialCategory) return String(specialCategory.id);
+    if (!lojaAtualId) throw new Error('Loja nao identificada.');
+
+    const { data, error } = await supabase
+      .from('categorias')
+      .insert([
+        {
+          loja_id: lojaAtualId,
+          nome: SPECIAL_CATEGORY_NAME,
+          emoji: '⭐',
+        },
+      ])
+      .select('id')
+      .single();
+
+    if (error || !data?.id) {
+      throw error ?? new Error('Nao foi possivel criar a categoria de especial do mes.');
+    }
+
+    return String(data.id);
+  };
+
+  const updateProductActive = async (product: any, active: boolean) => {
+    if (!canManageMenu) return toast.error('Seu perfil permite apenas visualizar o cardapio.');
+
+    await updateProduct({
+      ...product,
+      active,
+    });
+  };
+
+  const updateSpecialField = (slot: SpecialSlotKey, field: 'name' | 'price', value: string) => {
+    setSpecialForm((prev) => ({
+      ...prev,
+      [slot]: {
+        ...prev[slot],
+        [field]: value,
+      },
+    }));
+  };
+
+  const saveSpecialSlot = async (slot: (typeof specialSlots)[number]) => {
+    if (!canManageMenu) return toast.error('Seu perfil permite apenas visualizar o cardapio.');
+    if (!lojaAtualId) return toast.error('Loja nao identificada.');
+
+    const form = specialForm[slot.key];
+    const cleanName = form.name.trim();
+    const numericPrice = Number(String(form.price || '').replace(',', '.'));
+
+    if (!cleanName) return toast.error(`Informe o nome de ${slot.label.toLowerCase()}.`);
+    if (!numericPrice || numericPrice <= 0) return toast.error('Informe um preco valido maior que zero.');
+
+    setSavingSpecial(true);
+    try {
+      const categoryId = await ensureSpecialCategory();
+      const existingProduct = specialProductsBySlot.get(slot.key);
+      const productName = `${specialProductPrefix(slot.label)} ${cleanName}`;
+
+      if (existingProduct) {
+        await updateProduct({
+          ...existingProduct,
+          name: productName,
+          price: numericPrice,
+          categoryId,
+          setor_impressao: existingProduct.setor_impressao || slot.setor,
+          active: true,
+        });
+      } else {
+        const success = await addProduct({
+          name: productName,
+          price: numericPrice,
+          categoryId,
+          setor_impressao: slot.setor,
+          active: true,
+        });
+
+        if (!success) throw new Error('Nao foi possivel salvar o especial do mes.');
+      }
+
+      toast.success(`${slot.label} salvo.`);
+    } catch (error) {
+      console.error(error);
+      toast.error('Erro ao salvar especial do mes.');
+    } finally {
+      setSavingSpecial(false);
+    }
+  };
+
   const handleSubmitProduct = async () => {
+    if (!canManageMenu) return toast.error('Seu perfil permite apenas visualizar o cardapio.');
     if (!lojaAtualId) return toast.error('Loja não identificada. Saia e entre novamente.');
 
     const numericPrice = parseFloat(String(price).replace(',', '.'));
@@ -197,6 +365,7 @@ export function ProductsPage() {
           price: numericPrice,
           categoryId: resolvedCategoryId,
           setor_impressao: resolvedSetorImpressao,
+          active: products.find((product) => String(product.id) === String(editProdId))?.active ?? true,
         });
       } else {
         const success = await addProduct({
@@ -227,6 +396,7 @@ export function ProductsPage() {
   };
 
   const startEditProduct = (p: any) => {
+    if (!canManageMenu) return toast.error('Seu perfil permite apenas visualizar o cardapio.');
     setName(p.name);
     setPrice(p.price.toString());
     setCategoryId(p.categoryId);
@@ -245,6 +415,7 @@ export function ProductsPage() {
   };
 
   const handleSubmitCategory = async () => {
+    if (!canManageMenu) return toast.error('Seu perfil permite apenas visualizar categorias.');
     if (!lojaAtualId) return toast.error('Loja não identificada.');
 
     const nextErrors = { name: !catName.trim() };
@@ -280,6 +451,7 @@ export function ProductsPage() {
   };
 
   const startEditCategory = (cat: any) => {
+    if (!canManageMenu) return toast.error('Seu perfil permite apenas visualizar categorias.');
     setCatName(cat.name);
     setCatEmoji(cat.emoji);
     setEditCatId(cat.id);
@@ -300,6 +472,12 @@ export function ProductsPage() {
     return products.filter(p => {
       const category = categoriesMap.get(String(p.categoryId));
       const isAdicional = category ? isAdditionsCategory(category) : false;
+      const isEspecial = category ? isSpecialCategory(category) : false;
+      const isInactive = p.active === false;
+
+      if (activeTab !== 'inactive' && isInactive) return false;
+      if (activeTab === 'inactive') return false;
+      if (isEspecial) return false;
       
       if (activeTab === 'products' && isAdicional) return false;
       if (activeTab === 'additions' && !isAdicional) return false;
@@ -310,6 +488,32 @@ export function ProductsPage() {
       return matchesSearch && (activeTab === 'additions' ? true : matchesCategory);
     });
   }, [products, searchQuery, activeCategoryFilter, activeTab, categoriesMap]);
+
+  const inactiveProductsByCategory = useMemo(() => {
+    const query = searchQuery.toLowerCase().trim();
+    const grouped = new Map<string, { category: any; products: any[] }>();
+
+    products
+      .filter((product) => product.active === false)
+      .filter((product) => !query || product.name.toLowerCase().includes(query))
+      .forEach((product) => {
+        const category = categoriesMap.get(String(product.categoryId));
+        const key = String(product.categoryId || 'sem-categoria');
+
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            category: category ?? { id: key, name: 'Sem categoria', emoji: '' },
+            products: [],
+          });
+        }
+
+        grouped.get(key)!.products.push(product);
+      });
+
+    return Array.from(grouped.values()).sort((a, b) =>
+      String(a.category?.name || '').localeCompare(String(b.category?.name || ''), 'pt-BR')
+    );
+  }, [products, categoriesMap, searchQuery]);
 
   const inputClass = "w-full px-4 py-3.5 rounded-xl bg-white text-black border border-border placeholder:text-gray-400 focus:outline-none focus:border-primary focus:shadow-[0_0_15px_rgba(255,106,0,0.2)] transition-all font-medium";
   const inputErrorClass = 'border-red-500 ring-4 ring-red-500/10 focus:border-red-500';
@@ -346,15 +550,27 @@ export function ProductsPage() {
                 <Layers className="w-4 h-4" /> Adicionais
               </button>
               <button
+                onClick={() => { setActiveTab('special'); setShowProdForm(false); setShowCatForm(false); }}
+                className={`px-5 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'special' ? 'bg-primary text-black shadow-md scale-[1.02]' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+              >
+                <Star className="w-4 h-4" /> Especial do mes
+              </button>
+              <button
                 onClick={() => { setActiveTab('categories'); setShowCatForm(false); }}
                 className={`px-5 py-2.5 rounded-lg font-bold text-sm transition-all flex items-center gap-2 whitespace-nowrap ${activeTab === 'categories' ? 'bg-primary text-black shadow-md scale-[1.02]' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
               >
                 <Folder className="w-4 h-4" /> Categorias
               </button>
+              <button
+                onClick={() => { setActiveTab('inactive'); setShowProdForm(false); setShowCatForm(false); }}
+                className={`px-4 py-2.5 rounded-lg font-bold text-sm transition-all whitespace-nowrap ${activeTab === 'inactive' ? 'bg-primary text-black shadow-md scale-[1.02]' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}
+              >
+                Produtos inativos
+              </button>
             </div>
           </div>
 
-          {(activeTab === 'products' || activeTab === 'additions') && (
+          {(activeTab === 'products' || activeTab === 'additions' || activeTab === 'inactive') && (
             <section className="animate-slide-up">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                 <div className="relative w-full md:w-96 group">
@@ -368,7 +584,7 @@ export function ProductsPage() {
                   />
                 </div>
 
-                {!showProdForm && (
+                {canManageMenu && !showProdForm && activeTab !== 'inactive' && (
                   <button onClick={() => setShowProdForm(true)} className="w-full md:w-auto bg-primary text-black font-black px-6 py-3 rounded-xl text-sm shadow-md hover:opacity-90 transition-all flex items-center justify-center gap-2 active:scale-95 hover:shadow-[0_0_15px_rgba(255,106,0,0.3)] hover:-translate-y-0.5">
                     <Plus className="w-5 h-5" /> Adicionar {activeTab === 'additions' ? 'Adicional' : 'Produto'}
                   </button>
@@ -419,7 +635,7 @@ export function ProductsPage() {
                 </div>
               )}
 
-              {showProdForm && (
+              {canManageMenu && showProdForm && activeTab !== 'inactive' && (
                 <div style={{ backgroundColor: '#111' }} className="border border-gray-800 p-6 rounded-2xl shadow-2xl mb-8 relative overflow-hidden animate-fade-in text-white">
                   {editProdId && <div className="absolute top-0 left-0 w-full h-1 bg-primary animate-pulse" />}
                   <div className="flex justify-between items-center mb-6">
@@ -510,6 +726,51 @@ export function ProductsPage() {
                 </div>
               )}
 
+              {activeTab === 'inactive' ? (
+                <div className="space-y-5">
+                  {inactiveProductsByCategory.length === 0 && (
+                    <p className="text-center py-12 text-muted-foreground bg-card rounded-2xl border border-dashed border-border font-medium">
+                      {searchQuery ? 'Nenhum produto inativo encontrado na pesquisa.' : 'Nenhum produto inativo no momento.'}
+                    </p>
+                  )}
+
+                  {inactiveProductsByCategory.map(({ category, products: inactiveProducts }) => (
+                    <div key={String(category.id)} className="rounded-2xl border border-border bg-card p-4">
+                      <div className="mb-3 flex items-center justify-between gap-3 border-b border-border pb-3">
+                        <h2 className="text-sm font-black uppercase tracking-wide text-foreground">
+                          {category.emoji ? `${category.emoji} ` : ''}{category.name}
+                        </h2>
+                        <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-black text-muted-foreground">
+                          {inactiveProducts.length}
+                        </span>
+                      </div>
+
+                      <div className="space-y-3">
+                        {inactiveProducts.map((product) => (
+                          <div key={product.id} className="flex flex-col gap-3 rounded-xl border border-border bg-background p-4 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="font-black text-lg text-foreground">{product.name}</p>
+                              <p className="mt-1 text-sm font-bold text-green-500">
+                                R$ {Number(product.price).toFixed(2)}
+                              </p>
+                            </div>
+
+                            {canManageMenu && (
+                              <button
+                                type="button"
+                                onClick={() => updateProductActive(product, true)}
+                                className="inline-flex items-center justify-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 px-4 py-2 text-xs font-black text-green-500 transition-all hover:bg-green-500 hover:text-white"
+                              >
+                                <RotateCcw className="h-4 w-4" /> Ativar novamente
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
               <div className="space-y-3">
                 {filteredProducts.length === 0 && !showProdForm && (
                   <p className="text-center py-12 text-muted-foreground bg-card rounded-2xl border border-dashed border-border font-medium">
@@ -539,17 +800,142 @@ export function ProductsPage() {
                       <span className="font-black text-lg bg-green-500/10 text-green-500 border border-green-500/20 px-3 py-1 rounded-lg">
                         R$ {Number(p.price).toFixed(2)}
                       </span>
-                      <div className="flex gap-2">
-                        <button onClick={() => startEditProduct(p)} className="p-2.5 bg-muted text-foreground rounded-lg hover:bg-primary hover:text-black transition-colors active:scale-90 opacity-100 md:opacity-0 md:group-hover:opacity-100">
-                          <Edit2 className="w-4 h-4" />
-                        </button>
-                        <button onClick={() => setDeleteProdTarget(p)} className="p-2.5 bg-muted text-destructive hover:bg-destructive hover:text-white rounded-lg transition-colors active:scale-90 opacity-100 md:opacity-0 md:group-hover:opacity-100">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
+                      {canManageMenu && (
+                        <div className="flex gap-2">
+                          <button onClick={() => startEditProduct(p)} className="p-2.5 bg-muted text-foreground rounded-lg hover:bg-primary hover:text-black transition-colors active:scale-90 opacity-100 md:opacity-0 md:group-hover:opacity-100">
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => updateProductActive(p, false)} className="p-2.5 bg-muted text-amber-500 hover:bg-amber-500 hover:text-white rounded-lg transition-colors active:scale-90 opacity-100 md:opacity-0 md:group-hover:opacity-100" title="Inativar produto">
+                            <Power className="w-4 h-4" />
+                          </button>
+                          <button onClick={() => setDeleteProdTarget(p)} className="p-2.5 bg-muted text-destructive hover:bg-destructive hover:text-white rounded-lg transition-colors active:scale-90 opacity-100 md:opacity-0 md:group-hover:opacity-100">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
+              </div>
+              )}
+            </section>
+          )}
+
+          {activeTab === 'special' && (
+            <section className="animate-slide-up">
+              <div className="mb-6 rounded-2xl border border-border bg-card p-4">
+                <h2 className="text-xl font-black text-foreground">Especial do mes</h2>
+                <p className="mt-1 text-sm font-bold text-muted-foreground">
+                  Configure ate tres destaques para aparecerem no cardapio: entrada, prato e bebida.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+                {specialSlots.map((slot) => {
+                  const product = specialProductsBySlot.get(slot.key);
+                  const isActive = product?.active !== false;
+                  const displayName = specialForm[slot.key].name;
+                  const displayPrice = specialForm[slot.key].price;
+
+                  return (
+                    <div key={slot.key} className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+                      <div className="mb-4 flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-xs font-black uppercase tracking-widest text-primary">
+                            {slot.label}
+                          </p>
+                          <h3 className="mt-1 text-xl font-black text-foreground">
+                            {displayName || 'Nao configurado'}
+                          </h3>
+                        </div>
+                        {product && (
+                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-black ${isActive ? 'bg-green-500/10 text-green-500' : 'bg-amber-500/10 text-amber-500'}`}>
+                            {isActive ? 'Ativo' : 'Inativo'}
+                          </span>
+                        )}
+                      </div>
+
+                      {canManageMenu ? (
+                        <div className="space-y-3">
+                          <label className="block">
+                            <span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted-foreground">
+                              Nome
+                            </span>
+                            <input
+                              value={specialForm[slot.key].name}
+                              onChange={(event) => updateSpecialField(slot.key, 'name', event.target.value)}
+                              placeholder={`Ex: ${slot.label}`}
+                              className={inputClass}
+                            />
+                          </label>
+
+                          <label className="block">
+                            <span className="mb-2 block text-xs font-black uppercase tracking-wider text-muted-foreground">
+                              Preco
+                            </span>
+                            <input
+                              value={specialForm[slot.key].price}
+                              onChange={(event) => updateSpecialField(slot.key, 'price', event.target.value)}
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="0.00"
+                              className={inputClass}
+                            />
+                          </label>
+
+                          <button
+                            type="button"
+                            onClick={() => saveSpecialSlot(slot)}
+                            disabled={savingSpecial}
+                            className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-4 py-3 text-sm font-black text-black disabled:opacity-60"
+                          >
+                            {savingSpecial ? <Loader2 className="h-4 w-4 animate-spin" /> : <Star className="h-4 w-4" />}
+                            Salvar destaque
+                          </button>
+
+                          {product && (
+                            <button
+                              type="button"
+                              onClick={() => updateProductActive(product, !isActive)}
+                              className={`flex w-full items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-black ${
+                                isActive
+                                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-500'
+                                  : 'border-green-500/30 bg-green-500/10 text-green-500'
+                              }`}
+                            >
+                              {isActive ? <Power className="h-4 w-4" /> : <RotateCcw className="h-4 w-4" />}
+                              {isActive ? 'Inativar por enquanto' : 'Ativar novamente'}
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-border bg-background p-4">
+                          {product ? (
+                            <>
+                              <p className="text-sm font-bold text-muted-foreground">
+                                {isActive ? 'Disponivel no cardapio' : 'Configurado, mas inativo'}
+                              </p>
+                              <p className="mt-2 text-lg font-black text-green-500">
+                                R$ {Number(product.price || 0).toFixed(2)}
+                              </p>
+                            </>
+                          ) : (
+                            <p className="text-sm font-bold text-muted-foreground">
+                              Sem item cadastrado.
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {!canManageMenu && product && (
+                        <p className="mt-3 text-xs font-bold text-muted-foreground">
+                          {displayPrice ? `Valor: R$ ${Number(displayPrice).toFixed(2)}` : ''}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -558,14 +944,14 @@ export function ProductsPage() {
             <section className="animate-slide-up">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-bold text-muted-foreground">Gerenciar Categorias</h2>
-                {!showCatForm && (
+                {canManageMenu && !showCatForm && (
                   <button onClick={() => setShowCatForm(true)} className="bg-primary text-black font-black px-6 py-3 rounded-xl text-sm shadow-md hover:opacity-90 transition-all flex items-center gap-2 active:scale-95 hover:-translate-y-0.5 hover:shadow-[0_0_15px_rgba(255,106,0,0.3)]">
                     <Plus className="w-5 h-5" /> Nova Categoria
                   </button>
                 )}
               </div>
 
-              {showCatForm && (
+              {canManageMenu && showCatForm && (
                 <div style={{ backgroundColor: '#111' }} className="border border-gray-800 p-6 rounded-2xl shadow-2xl mb-8 relative overflow-hidden animate-fade-in text-white">
                   {editCatId && <div className="absolute top-0 left-0 w-full h-1 bg-primary animate-pulse" />}
                   <div className="flex justify-between items-center mb-6">
@@ -606,10 +992,12 @@ export function ProductsPage() {
                       <span className="text-4xl drop-shadow-md">{cat.emoji}</span>
                       <p className="font-black text-foreground text-xl group-hover:text-primary transition-colors">{cat.name}</p>
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => startEditCategory(cat)} className="p-2.5 bg-muted rounded-lg hover:bg-primary hover:text-black transition-colors active:scale-90"><Edit2 className="w-4 h-4" /></button>
-                      <button onClick={() => setDeleteCatTarget(cat)} className="p-2.5 bg-muted text-destructive hover:bg-destructive hover:text-white rounded-lg transition-colors active:scale-90"><Trash2 className="w-4 h-4" /></button>
-                    </div>
+                    {canManageMenu && (
+                      <div className="flex gap-2">
+                        <button onClick={() => startEditCategory(cat)} className="p-2.5 bg-muted rounded-lg hover:bg-primary hover:text-black transition-colors active:scale-90"><Edit2 className="w-4 h-4" /></button>
+                        <button onClick={() => setDeleteCatTarget(cat)} className="p-2.5 bg-muted text-destructive hover:bg-destructive hover:text-white rounded-lg transition-colors active:scale-90"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -618,7 +1006,7 @@ export function ProductsPage() {
         </div>
       </div>
 
-      {deleteProdTarget && (
+      {canManageMenu && deleteProdTarget && (
         <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/90 p-4 print:hidden">
           <div className="w-full max-w-sm rounded-3xl border border-gray-800 bg-[#111] p-6 text-white shadow-2xl animate-fade-in">
             <h3 className="text-xl font-black mb-2">Excluir Item?</h3>
@@ -638,6 +1026,7 @@ export function ProductsPage() {
               <button
                 type="button"
                 onClick={async () => {
+                  if (!canManageMenu) return toast.error('Seu perfil permite apenas visualizar o cardapio.');
                   await deleteProduct(deleteProdTarget.id);
                   toast.success("Item removido com sucesso.");
                   setDeleteProdTarget(null);
@@ -651,7 +1040,7 @@ export function ProductsPage() {
         </div>
       )}
 
-      {deleteCatTarget && (
+      {canManageMenu && deleteCatTarget && (
         <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/90 p-4 print:hidden">
           <div className="w-full max-w-sm rounded-3xl border border-gray-800 bg-[#111] p-6 text-white shadow-2xl animate-fade-in">
             <h3 className="text-xl font-black mb-2">Excluir Categoria?</h3>
@@ -671,6 +1060,7 @@ export function ProductsPage() {
               <button
                 type="button"
                 onClick={async () => {
+                  if (!canManageMenu) return toast.error('Seu perfil permite apenas visualizar categorias.');
                   await deleteCategory(deleteCatTarget.id);
                   toast.success("Categoria removida com sucesso.");
                   setDeleteCatTarget(null);
