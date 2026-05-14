@@ -103,6 +103,20 @@ const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024;
 const MAX_INITIAL_TABLES = 200;
 const VALID_USER_PROFILES = new Set(['admin_loja', 'operador']);
 
+const STORE_DELETE_TABLES: Array<{ table: string; label: string }> = [
+  { table: 'print_jobs', label: 'fila de impressao' },
+  { table: 'cash_withdrawals', label: 'sangrias' },
+  { table: 'cash_sessions', label: 'caixas' },
+  { table: 'pedido_itens', label: 'itens dos pedidos' },
+  { table: 'pedidos', label: 'pedidos' },
+  { table: 'clientes', label: 'clientes' },
+  { table: 'mesas', label: 'mesas' },
+  { table: 'produtos', label: 'produtos' },
+  { table: 'categorias', label: 'categorias' },
+  { table: 'configuracoes_loja', label: 'configuracoes da loja' },
+  { table: 'usuario_lojas', label: 'vinculos de usuarios' },
+];
+
 function makeSlug(value: string) {
   return String(value || '')
     .normalize('NFD')
@@ -326,6 +340,33 @@ export function DeveloperPanel() {
   };
 
   // NOVA FUNÇÃO: Executa a exclusão da loja
+  const deleteStoreLogoFile = async (logoUrl?: string | null) => {
+    if (!logoUrl) return;
+
+    const marker = '/storage/v1/object/public/logos/';
+    const markerIndex = logoUrl.indexOf(marker);
+    if (markerIndex === -1) return;
+
+    const path = decodeURIComponent(logoUrl.slice(markerIndex + marker.length).split('?')[0]);
+    if (!path) return;
+
+    const { error } = await supabase.storage.from('logos').remove([path]);
+    if (error) {
+      console.warn('Nao foi possivel remover logo da loja:', error);
+    }
+  };
+
+  const deleteRowsByStore = async (table: string, label: string, lojaId: string) => {
+    const { error } = await supabase
+      .from(table)
+      .delete()
+      .eq('loja_id', lojaId);
+
+    if (error) {
+      throw new Error(`Erro ao excluir ${label}: ${error.message}`);
+    }
+  };
+
   const handleDeleteStore = async () => {
     if (!deletingLoja) return;
 
@@ -333,13 +374,59 @@ export function DeveloperPanel() {
     try {
       // Deleta a loja. Se você tiver as chaves estrangeiras com "ON DELETE CASCADE", 
       // o Supabase cuidará de deletar os produtos, pedidos, etc, associados.
-      const { error } = await supabase
+      const lojaId = deletingLoja.id;
+
+      const { data: storeUsers, error: usersError } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('loja_id', lojaId);
+
+      if (usersError) throw usersError;
+
+      const { data: linkedUsers, error: linkedUsersError } = await supabase
+        .from('usuario_lojas')
+        .select('usuario_id')
+        .eq('loja_id', lojaId);
+
+      if (linkedUsersError) throw linkedUsersError;
+
+      const userIdsToDelete = Array.from(
+        new Set([
+          ...(storeUsers ?? []).map((usuario: any) => String(usuario.id)),
+          ...(linkedUsers ?? []).map((vinculo: any) => String(vinculo.usuario_id)),
+        ].filter(Boolean))
+      );
+
+      for (const item of STORE_DELETE_TABLES) {
+        await deleteRowsByStore(item.table, item.label, lojaId);
+      }
+
+      for (const userId of userIdsToDelete) {
+        const { data, error } = await supabase.functions.invoke('delete-operator', {
+          body: { userId },
+        });
+
+        if (error || data?.error) {
+          throw new Error(data?.error || error?.message || 'Erro ao excluir usuario da loja.');
+        }
+      }
+
+      const { error: usersDeleteError } = await supabase
+        .from('usuarios')
+        .delete()
+        .eq('loja_id', lojaId);
+
+      if (usersDeleteError) throw usersDeleteError;
+
+      await deleteStoreLogoFile(deletingLoja.logo_url);
+
+      const { error: lojaError } = await supabase
         .from('lojas')
         .delete()
-        .eq('id', deletingLoja.id);
+        .eq('id', lojaId);
 
-      if (error) {
-        throw error;
+      if (lojaError) {
+        throw lojaError;
       }
 
       toast.success('Loja excluída com sucesso!');
@@ -352,7 +439,7 @@ export function DeveloperPanel() {
       if (error.code === '23503') {
         toast.error('Não é possível excluir a loja pois ela possui registros vinculados (usuários, produtos, etc).');
       } else {
-        toast.error('Ocorreu um erro ao excluir a loja.');
+        toast.error(error.message || 'Ocorreu um erro ao excluir a loja.');
       }
     } finally {
       setIsDeleting(false);
