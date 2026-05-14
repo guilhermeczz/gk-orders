@@ -30,6 +30,16 @@ type QuickCustomer = {
   referencia?: string | null;
 };
 
+const getCartLineProductId = (lineKey: string) => lineKey.split('__line__')[0];
+
+const createCartLineKey = (productId: string) =>
+  `${productId}__line__${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+const lineHasAdditions = (
+  lineKey: string,
+  additionsState: Record<string, Record<string, number>>
+) => Object.values(additionsState[lineKey] ?? {}).some((qty) => Number(qty || 0) > 0);
+
 interface NewOrderModalProps {
   open: boolean;
   onClose: () => void;
@@ -338,11 +348,12 @@ export function NewOrderModal({
 
   const cartItems = useMemo(() => {
     return Object.entries(cart)
-      .map(([id, quantity]) => {
-        const p = productsMap.get(id); 
+      .map(([lineKey, quantity]) => {
+        const productId = getCartLineProductId(lineKey);
+        const p = productsMap.get(productId); 
         if (!p) return null;
 
-        const additionsMap = cartAdditions[id] ?? {};
+        const additionsMap = cartAdditions[lineKey] ?? {};
         const additions = Object.entries(additionsMap)
           .map(([additionId, additionQty]) => {
             const additionProduct = productsMap.get(additionId); 
@@ -358,7 +369,7 @@ export function NewOrderModal({
           .filter(Boolean) as OrderItemAddition[];
 
         return {
-          productId: String(id),
+          productId,
           productName: p.name,
           quantity,
           unitPrice: Number(p.price || 0),
@@ -389,6 +400,31 @@ export function NewOrderModal({
   const updateDeliveryField = (field: keyof typeof emptyDeliveryData, value: string) => {
     setDeliveryData((prev) => ({ ...prev, [field]: value }));
   };
+
+  const findPlainLineKey = (
+    productId: string,
+    cartState: Record<string, number> = cart,
+    additionsState: Record<string, Record<string, number>> = cartAdditions
+  ) =>
+    Object.keys(cartState).find(
+      (lineKey) =>
+        getCartLineProductId(lineKey) === productId &&
+        Number(cartState[lineKey] || 0) > 0 &&
+        !lineHasAdditions(lineKey, additionsState)
+    );
+
+  const getProductCartQuantity = (productId: string) =>
+    Object.entries(cart).reduce(
+      (sum, [lineKey, quantity]) =>
+        getCartLineProductId(lineKey) === productId ? sum + Number(quantity || 0) : sum,
+      0
+    );
+
+  const getProductAdditionsCount = (productId: string) =>
+    Object.entries(cartAdditions).reduce((sum, [lineKey, additions]) => {
+      if (getCartLineProductId(lineKey) !== productId) return sum;
+      return sum + Object.values(additions).reduce((acc, value) => acc + Number(value || 0), 0);
+    }, 0);
 
   useEffect(() => {
     if (!open || !lojaAtualId || (orderType !== 'Delivery' && orderType !== 'Retirada')) {
@@ -502,18 +538,61 @@ export function NewOrderModal({
     const safeId = String(productId);
 
     setCart((prev) => {
-      const next = (prev[safeId] || 0) + delta;
+      const targetLineKey =
+        delta > 0
+          ? findPlainLineKey(safeId, prev, cartAdditions) ??
+            (!prev[safeId] && !lineHasAdditions(safeId, cartAdditions) ? safeId : createCartLineKey(safeId))
+          : findPlainLineKey(safeId, prev, cartAdditions) ??
+            Object.keys(prev)
+              .filter((lineKey) => getCartLineProductId(lineKey) === safeId)
+              .reverse()[0];
+
+      if (!targetLineKey) return prev;
+
+      const next = (prev[targetLineKey] || 0) + delta;
 
       if (next <= 0) {
-        const { [safeId]: _, ...rest } = prev;
+        const { [targetLineKey]: _, ...rest } = prev;
         setCartAdditions((current) => {
-          const { [safeId]: __, ...remaining } = current;
+          const { [targetLineKey]: __, ...remaining } = current;
           return remaining;
         });
         return rest;
       }
-      return { ...prev, [safeId]: next };
+
+      return { ...prev, [targetLineKey]: next };
     });
+  };
+
+  const openAdditionsForProduct = (productId: string) => {
+    const plainLineKey = findPlainLineKey(productId);
+
+    if (plainLineKey) {
+      const plainQty = Number(cart[plainLineKey] || 0);
+
+      if (plainQty > 1) {
+        const additionLineKey = createCartLineKey(productId);
+
+        setCart((prev) => ({
+          ...prev,
+          [plainLineKey]: Number(prev[plainLineKey] || 0) - 1,
+          [additionLineKey]: 1,
+        }));
+        setAdditionTargetProductId(additionLineKey);
+        return;
+      }
+
+      setAdditionTargetProductId(plainLineKey);
+      return;
+    }
+
+    const existingLineKey = Object.keys(cart).find(
+      (lineKey) => getCartLineProductId(lineKey) === productId
+    );
+
+    if (existingLineKey) {
+      setAdditionTargetProductId(existingLineKey);
+    }
   };
 
   const updateAdditionQty = (
@@ -550,7 +629,7 @@ export function NewOrderModal({
   };
 
   const additionTargetProduct = additionTargetProductId
-    ? getProductById(additionTargetProductId)
+    ? getProductById(getCartLineProductId(additionTargetProductId))
     : null;
 
   const handleConfirm = async () => {
@@ -1291,15 +1370,10 @@ export function NewOrderModal({
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                           {prods.map((p) => {
                             const safeId = String(p.id);
-                            const qty = cart[safeId] || 0;
+                            const qty = getProductCartQuantity(safeId);
                             const pName = p.name;
                             const pPrice = Number(p.price || 0);
-                            const additionsCount = cartAdditions[safeId]
-                              ? Object.values(cartAdditions[safeId]).reduce(
-                                  (sum, value) => sum + Number(value || 0),
-                                  0
-                                )
-                              : 0;
+                            const additionsCount = getProductAdditionsCount(safeId);
 
                             return (
                               <div
@@ -1320,7 +1394,7 @@ export function NewOrderModal({
                                     productAcceptsAdditions(safeId) && (
                                       <button
                                         type="button"
-                                        onClick={() => setAdditionTargetProductId(safeId)}
+                                        onClick={() => openAdditionsForProduct(safeId)}
                                         className="mt-2 w-fit rounded-lg border border-primary/30 bg-primary/10 px-3 py-1 text-[11px] font-black text-primary"
                                       >
                                         Adicionais

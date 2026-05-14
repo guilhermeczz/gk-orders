@@ -6,7 +6,12 @@ import { supabase } from '@/lib/supabase';
 import type { DeliveryStatus, Order } from '@/lib/types';
 import { Bike, Clock, Flame, MapPinned, CheckCircle2, Plus, Phone, Wallet, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
-import { buildDeliveryOutMessage, buildWhatsappUrl } from '@/lib/whatsapp';
+import {
+  buildDeliveryOutMessage,
+  buildWhatsappUrl,
+  isWhatsappMessageSent,
+  setWhatsappMessageSent,
+} from '@/lib/whatsapp';
 
 const deliveryColumns: Array<{ status: DeliveryStatus; title: string; icon: any }> = [
   { status: 'pendente', title: 'Pendente', icon: Clock },
@@ -48,6 +53,7 @@ export function DeliveryPage() {
   const { orders, lojaAtualId, fetchData } = useAppStore();
   const [modalOpen, setModalOpen] = useState(false);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const [whatsappSentByOrder, setWhatsappSentByOrder] = useState<Record<string, boolean>>({});
 
   const deliveryOrders = useMemo(() => {
     return orders
@@ -124,6 +130,12 @@ export function DeliveryPage() {
     }
 
     window.open(buildWhatsappUrl(phone, buildDeliveryOutMessage(order)), '_blank', 'noopener,noreferrer');
+    markDeliveryMessageSent(order.id, true);
+  };
+
+  const markDeliveryMessageSent = (orderId: string, sent: boolean) => {
+    setWhatsappMessageSent(orderId, 'delivery-out', sent);
+    setWhatsappSentByOrder((prev) => ({ ...prev, [orderId]: sent }));
   };
 
   return (
@@ -182,6 +194,8 @@ export function DeliveryPage() {
                     const meta = order.metadataDelivery;
                     const endereco = meta?.endereco;
                     const next = nextStatus[column.status];
+                    const deliveryMessageSent =
+                      whatsappSentByOrder[order.id] ?? isWhatsappMessageSent(order.id, 'delivery-out');
 
                     return (
                       <article key={order.id} className="rounded-xl border border-border bg-background p-4 shadow-sm">
@@ -231,13 +245,25 @@ export function DeliveryPage() {
                             </button>
 
                             {column.status === 'preparo' && (
-                              <button
-                                type="button"
-                                onClick={() => openDeliveryMessage(order)}
-                                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs font-black text-green-400 transition-all hover:bg-green-500/20"
-                              >
-                                <MessageCircle className="h-4 w-4" /> Mensagem: saiu para entrega
-                              </button>
+                              <div className="space-y-2">
+                                <button
+                                  type="button"
+                                  onClick={() => openDeliveryMessage(order)}
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-green-500/30 bg-green-500/10 px-3 py-2 text-xs font-black text-green-400 transition-all hover:bg-green-500/20"
+                                >
+                                  <MessageCircle className="h-4 w-4" /> Mensagem: saiu para entrega
+                                </button>
+
+                                <label className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-[11px] font-bold text-muted-foreground">
+                                  <input
+                                    type="checkbox"
+                                    checked={deliveryMessageSent}
+                                    onChange={(event) => markDeliveryMessageSent(order.id, event.target.checked)}
+                                    className="h-4 w-4 accent-green-500"
+                                  />
+                                  Mensagem enviada ao WhatsApp
+                                </label>
+                              </div>
                             )}
                           </div>
                         )}

@@ -5,6 +5,7 @@ import {
   Home,
   Package,
   BarChart3,
+  Crown,
   LogOut,
   Wallet,
   CheckCircle2,
@@ -21,7 +22,7 @@ import { toast } from 'sonner';
 import logoFull from '@/assets/logo-full.png';
 
 type NavItem = {
-  to: '/dashboard' | '/delivery' | '/customers' | '/paid-orders' | '/products' | '/reports' | '/cash-register' | '/developer';
+  to: '/dashboard' | '/delivery' | '/customers' | '/paid-orders' | '/products' | '/best-sellers' | '/reports' | '/cash-register' | '/developer';
   label: string;
   icon: any;
   allowedRoles: string[]; // Controle de permissão
@@ -34,6 +35,7 @@ const baseNavItems: NavItem[] = [
   { to: '/customers', label: 'Clientes', icon: UserRound, allowedRoles: ['admin_loja', 'operador', 'desenvolvedor'] },
   { to: '/paid-orders', label: 'Pedidos Pagos', icon: CheckCircle2, allowedRoles: ['admin_loja', 'desenvolvedor'] },
   { to: '/products', label: 'Produtos', icon: Package, allowedRoles: ['admin_loja', 'desenvolvedor'] },
+  { to: '/best-sellers', label: 'Mais Pedidos', icon: Crown, allowedRoles: ['admin_loja', 'desenvolvedor'] },
   { to: '/reports', label: 'Relatórios', icon: BarChart3, allowedRoles: ['admin_loja', 'desenvolvedor'] },
   { to: '/cash-register', label: 'Controle de Caixa', icon: Wallet, allowedRoles: ['admin_loja', 'desenvolvedor'] },
 ];

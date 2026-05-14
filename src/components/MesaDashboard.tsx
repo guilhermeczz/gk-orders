@@ -9,7 +9,12 @@ import { supabase } from '@/lib/supabase';
 import type { Mesa, Order, OrderBatch, OrderItem } from '@/lib/types';
 import { NewOrderModal } from './NewOrderModal';
 import { useAuth } from '@/lib/auth';
-import { buildPickupReadyMessage, buildWhatsappUrl } from '@/lib/whatsapp';
+import {
+  buildPickupReadyMessage,
+  buildWhatsappUrl,
+  isWhatsappMessageSent,
+  setWhatsappMessageSent,
+} from '@/lib/whatsapp';
 
 const removerAcentos = (str: string) => {
   return String(str || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -1452,6 +1457,15 @@ function RetiradaCard({
 }) {
   const { user } = useAuth();
   const podePagar = user?.perfil === 'admin_loja' || user?.isDeveloper;
+  const [pickupMessageSent, setPickupMessageSentState] = useState(() =>
+    isWhatsappMessageSent(order.id, 'pickup-ready')
+  );
+
+  const setPickupMessageSent = (sent: boolean) => {
+    setWhatsappMessageSent(order.id, 'pickup-ready', sent);
+    setPickupMessageSentState(sent);
+  };
+
   const openPickupMessage = () => {
     if (!order.clienteTelefone) {
       toast.error('Este pedido não tem WhatsApp cadastrado.');
@@ -1459,6 +1473,7 @@ function RetiradaCard({
     }
 
     window.open(buildWhatsappUrl(order.clienteTelefone, buildPickupReadyMessage(order)), '_blank', 'noopener,noreferrer');
+    setPickupMessageSent(true);
   };
 
   const batches: OrderBatch[] =
@@ -1549,7 +1564,18 @@ function RetiradaCard({
       </div>
 
       <div className="flex flex-col gap-3 pt-3 border-t border-border">
-        <span className="font-bold">{formatMoney(order.total)}</span>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="font-bold">{formatMoney(order.total)}</span>
+          <span
+            className={`rounded-md border px-2 py-1 text-[11px] font-black ${
+              order.paid
+                ? 'border-green-500/30 bg-green-500/10 text-green-400'
+                : 'border-amber-500/30 bg-amber-500/10 text-amber-400'
+            }`}
+          >
+            {order.paid ? 'PAGO' : 'A COBRAR NA RETIRADA'}
+          </span>
+        </div>
 
         <div className="flex flex-wrap gap-2 justify-end">
           <button
@@ -1570,14 +1596,26 @@ function RetiradaCard({
             Excluir
           </button>
 
-          <button
-            type="button"
-            onClick={openPickupMessage}
-            className="flex items-center gap-2 text-xs font-bold px-3 py-2 border border-green-500/30 bg-green-500/10 text-green-400 rounded-md"
-          >
-            <MessageCircle className="w-4 h-4" />
-            Avisar pronto
-          </button>
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={openPickupMessage}
+              className="flex items-center justify-center gap-2 text-xs font-bold px-3 py-2 border border-green-500/30 bg-green-500/10 text-green-400 rounded-md"
+            >
+              <MessageCircle className="w-4 h-4" />
+              Avisar pronto
+            </button>
+
+            <label className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-[11px] font-bold text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={pickupMessageSent}
+                onChange={(event) => setPickupMessageSent(event.target.checked)}
+                className="h-4 w-4 accent-green-500"
+              />
+              Mensagem enviada ao WhatsApp
+            </label>
+          </div>
 
           {podePagar && (
             <button
@@ -1586,7 +1624,7 @@ function RetiradaCard({
               className="flex items-center gap-2 text-xs font-black px-3 py-2 bg-green-600 text-white rounded-md"
             >
               <CreditCard className="w-4 h-4" />
-              Finalizar
+              Receber agora
             </button>
           )}
         </div>
